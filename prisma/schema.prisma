@@ -106,6 +106,7 @@ model PlayerEntry {
   isWinner            Boolean  @default(false) @map("is_winner")
   ownTokensClaimed    Boolean  @default(false) @map("own_tokens_claimed")
   rewardsClaimedCount Int      @default(0) @map("rewards_claimed_count")
+  rewardsClaimedBitmap String  @default("0") @map("rewards_claimed_bitmap") @db.VarChar(40) // u128 as string
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
 

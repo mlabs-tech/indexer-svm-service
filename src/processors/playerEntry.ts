@@ -50,6 +50,7 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     isWinner: entry.isWinner,
     ownTokensClaimed: entry.ownTokensClaimed,
     rewardsClaimedCount,
+    rewardsClaimedBitmap: entry.rewardsClaimedBitmap.toString(), // Store as string
   };
 
   if (existingEntry) {

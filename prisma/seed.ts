@@ -4,19 +4,19 @@ const prisma = new PrismaClient();
 
 const ASSETS = [
   { index: 0, symbol: 'SOL', name: 'Solana' },
-  { index: 1, symbol: 'TRUMP', name: 'Trump' },
-  { index: 2, symbol: 'PUMP', name: 'Pump' },
+  { index: 1, symbol: 'TRUMP', name: 'Official Trump' },
+  { index: 2, symbol: 'PUMP', name: 'Pump.fun' },
   { index: 3, symbol: 'BONK', name: 'Bonk' },
   { index: 4, symbol: 'JUP', name: 'Jupiter' },
-  { index: 5, symbol: 'PENGU', name: 'Pengu' },
-  { index: 6, symbol: 'PYTH', name: 'Pyth' },
+  { index: 5, symbol: 'PENGU', name: 'Pudgy Penguins' },
+  { index: 6, symbol: 'PYTH', name: 'Pyth Network' },
   { index: 7, symbol: 'HNT', name: 'Helium' },
   { index: 8, symbol: 'FARTCOIN', name: 'Fartcoin' },
   { index: 9, symbol: 'RAY', name: 'Raydium' },
-  { index: 10, symbol: 'WIF', name: 'Dogwifhat' },
-  { index: 11, symbol: 'RENDER', name: 'Render' },
-  { index: 12, symbol: 'ONDO', name: 'Ondo' },
-  { index: 13, symbol: 'MEW', name: 'Mew' },
+  { index: 10, symbol: 'JTO', name: 'Jito' },
+  { index: 11, symbol: 'KMNO', name: 'Kamino Finance' },
+  { index: 12, symbol: 'MET', name: 'Meteora' },
+  { index: 13, symbol: 'W', name: 'Wormhole' },
 ];
 
 async function main() {

@@ -10,20 +10,20 @@ const CMC_API_URL = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/
 // Token symbols mapped to CoinMarketCap IDs
 // IMPORTANT: These must be the correct Solana tokens!
 const TOKEN_CMC_IDS: Record<number, { symbol: string; cmcId: number }> = {
-  0: { symbol: 'SOL', cmcId: 5426 },      // Solana
-  1: { symbol: 'TRUMP', cmcId: 35336 },   // Official Trump
-  2: { symbol: 'PUMP', cmcId: 36507 },    // Pump.fun (Solana) - FIXED: was 31401 (Eternal AI)
-  3: { symbol: 'BONK', cmcId: 23095 },    // Bonk (Solana)
-  4: { symbol: 'JUP', cmcId: 29210 },     // Jupiter (Solana)
-  5: { symbol: 'PENGU', cmcId: 33498 },   // Pudgy Penguins
-  6: { symbol: 'PYTH', cmcId: 28177 },    // Pyth Network
-  7: { symbol: 'HNT', cmcId: 5665 },      // Helium
-  8: { symbol: 'FARTCOIN', cmcId: 33597 },// Fartcoin (Solana)
-  9: { symbol: 'RAY', cmcId: 8526 },      // Raydium (Solana)
-  10: { symbol: 'JTO', cmcId: 28541 },    // Jito (Solana)
-  11: { symbol: 'KMNO', cmcId: 29835 },   // Kamino (Solana)
-  12: { symbol: 'MET', cmcId: 38353 },    // Meteora (Solana) - FIXED: was 33626 (GAMA Coin)
-  13: { symbol: 'W', cmcId: 29587 },      // Wormhole
+  0: { symbol: 'SOL', cmcId: 5426 },       // Solana
+  1: { symbol: 'TRUMP', cmcId: 35336 },    // Official Trump
+  2: { symbol: 'PUMP', cmcId: 36507 },     // Pump.fun
+  3: { symbol: 'BONK', cmcId: 23095 },     // Bonk
+  4: { symbol: 'JUP', cmcId: 29210 },      // Jupiter
+  5: { symbol: 'PENGU', cmcId: 34466 },    // Pudgy Penguins - FIXED: was 33498
+  6: { symbol: 'PYTH', cmcId: 28177 },     // Pyth Network
+  7: { symbol: 'HNT', cmcId: 5665 },       // Helium
+  8: { symbol: 'FARTCOIN', cmcId: 33597 }, // Fartcoin
+  9: { symbol: 'RAY', cmcId: 8526 },       // Raydium
+  10: { symbol: 'JTO', cmcId: 28541 },     // Jito
+  11: { symbol: 'KMNO', cmcId: 30986 },    // Kamino Finance - FIXED: was 29835
+  12: { symbol: 'MET', cmcId: 38353 },     // Meteora
+  13: { symbol: 'W', cmcId: 29587 },       // Wormhole
 };
 
 let fetchInterval: NodeJS.Timeout | null = null;

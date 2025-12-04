@@ -281,6 +281,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
         isWinner: entry.isWinner,
         ownTokensClaimed: entry.ownTokensClaimed,
         rewardsClaimedCount: entry.rewardsClaimedCount,
+        rewardsClaimedBitmap: entry.rewardsClaimedBitmap || '0',
       })),
     };
   });
@@ -328,6 +329,134 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       ...claim,
       assetSymbol: getAssetSymbol(claim.assetIndex),
     }));
+  });
+
+  // Get arenas by player wallet(s)
+  // Supports multiple wallets via comma-separated list
+  app.get('/api/v1/arenas/player/:wallets', async (request) => {
+    const { wallets } = request.params as { wallets: string };
+    const { page = '1', limit = '20' } = request.query as {
+      page?: string;
+      limit?: string;
+    };
+
+    // Parse wallet addresses (comma-separated)
+    const walletList = wallets.split(',').map((w) => w.trim()).filter((w) => w.length > 0);
+
+    if (walletList.length === 0) {
+      return {
+        data: [],
+        pagination: { page: 1, limit: parseInt(limit), total: 0, pages: 0 },
+      };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    // Find all player entries for these wallets
+    const playerEntries = await prisma.playerEntry.findMany({
+      where: {
+        playerWallet: { in: walletList },
+      },
+      select: {
+        arenaId: true,
+      },
+      distinct: ['arenaId'],
+    });
+
+    const arenaIds = playerEntries.map((e) => e.arenaId);
+
+    if (arenaIds.length === 0) {
+      return {
+        data: [],
+        pagination: { page: parseInt(page), limit: parseInt(limit), total: 0, pages: 0 },
+      };
+    }
+
+    // Get the arenas with full details
+    const [arenas, total] = await Promise.all([
+      prisma.arena.findMany({
+        where: { arenaId: { in: arenaIds } },
+        orderBy: { arenaId: 'desc' },
+        skip,
+        take,
+        include: {
+          arenaAssets: {
+            select: {
+              assetIndex: true,
+              playerCount: true,
+              isWinner: true,
+              startPrice: true,
+              endPrice: true,
+              priceMovementBps: true,
+            },
+          },
+          playerEntries: {
+            select: {
+              playerWallet: true,
+              playerIndex: true,
+              assetIndex: true,
+              tokenAmount: true,
+              usdValue: true,
+              isWinner: true,
+              entryTimestamp: true,
+            },
+          },
+        },
+      }),
+      prisma.arena.count({ where: { arenaId: { in: arenaIds } } }),
+    ]);
+
+    return {
+      data: arenas.map((arena) => {
+        // Find the player's entry in this arena
+        const userEntries = arena.playerEntries.filter((e) => walletList.includes(e.playerWallet));
+        const userEntry = userEntries[0]; // Primary entry (could have multiple wallets)
+
+        return {
+          id: arena.id.toString(),
+          arenaId: arena.arenaId.toString(),
+          pda: arena.pda,
+          status: arena.status,
+          statusLabel: ArenaStatusLabels[arena.status as ArenaStatus],
+          playerCount: arena.playerCount,
+          assetCount: arena.assetCount,
+          winningAsset: arena.winningAsset,
+          winningAssetSymbol: arena.winningAsset !== null ? getAssetSymbol(arena.winningAsset) : null,
+          isSuspended: arena.isSuspended,
+          startTimestamp: arena.startTimestamp?.toISOString() || null,
+          endTimestamp: arena.endTimestamp?.toISOString() || null,
+          totalPoolUsd: arena.totalPoolUsd ? Number(arena.totalPoolUsd) : 0,
+          createdAt: arena.createdAt.toISOString(),
+          // User's participation info
+          userEntry: userEntry ? {
+            playerWallet: userEntry.playerWallet,
+            playerIndex: userEntry.playerIndex,
+            assetIndex: userEntry.assetIndex,
+            assetSymbol: getAssetSymbol(userEntry.assetIndex),
+            tokenAmount: userEntry.tokenAmount ? Number(userEntry.tokenAmount) : 0,
+            usdValue: userEntry.usdValue ? Number(userEntry.usdValue) : 0,
+            isWinner: userEntry.isWinner,
+            entryTimestamp: userEntry.entryTimestamp?.toISOString() || null,
+          } : null,
+          arenaAssets: arena.arenaAssets.map((asset) => ({
+            assetIndex: asset.assetIndex,
+            assetSymbol: getAssetSymbol(asset.assetIndex),
+            playerCount: asset.playerCount,
+            isWinner: asset.isWinner,
+            startPrice: asset.startPrice ? Number(asset.startPrice) : null,
+            endPrice: asset.endPrice ? Number(asset.endPrice) : null,
+            priceMovementBps: asset.priceMovementBps,
+          })),
+        };
+      }),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / take),
+      },
+    };
   });
 }
 
