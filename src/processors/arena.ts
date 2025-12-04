@@ -3,6 +3,7 @@ import { parseArena } from '../parsers/accounts';
 import { ArenaStatus, ArenaStatusLabels } from '../types/accounts';
 import prisma from '../db';
 import logger from '../utils/logger';
+import { submitArenaResults } from '../services/backendApi';
 
 /**
  * Process Arena account update
@@ -67,6 +68,9 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
       // If arena just ended (Ended or Finalized status), update player win/loss stats
       if (arena.status === ArenaStatus.Ended && arena.winningAsset !== 255) {
         await updatePlayerWinLossStats(arena.id, arena.winningAsset);
+        
+        // Submit results to backend for mastery point allocation
+        await submitArenaResultsToBackend(arena.id, arena.winningAsset);
       }
     }
 
@@ -206,5 +210,56 @@ async function updatePlayerWinLossStats(arenaId: bigint, winningAsset: number): 
   }
 
   logger.info({ arenaId: arenaId.toString(), winningAsset }, 'Updated all player win/loss stats');
+}
+
+/**
+ * Submit arena results to backend for mastery point allocation
+ */
+async function submitArenaResultsToBackend(arenaId: bigint, winningAsset: number): Promise<void> {
+  try {
+    // Get all player entries for this arena
+    const playerEntries = await prisma.playerEntry.findMany({
+      where: { arenaId },
+    });
+
+    if (playerEntries.length === 0) {
+      logger.warn({ arenaId: arenaId.toString() }, 'No player entries found for arena result submission');
+      return;
+    }
+
+    // Get arena assets to get volatility data
+    const arenaAssets = await prisma.arenaAsset.findMany({
+      where: { arenaId },
+    });
+
+    // Create a map of asset index to volatility (price movement in bps)
+    const assetVolatility = new Map<number, number>();
+    for (const asset of arenaAssets) {
+      assetVolatility.set(asset.assetIndex, Number(asset.priceMovementBps) || 0);
+    }
+
+    // Format entries for the backend API with volatility
+    const formattedEntries = playerEntries.map(entry => ({
+      playerWallet: entry.playerWallet,
+      assetIndex: entry.assetIndex,
+      tokenAmount: Number(entry.tokenAmount),
+      usdValue: Number(entry.usdValue),
+      volatility: assetVolatility.get(entry.assetIndex) || 0,
+    }));
+
+    const success = await submitArenaResults(arenaId, formattedEntries, winningAsset);
+    
+    if (success) {
+      logger.info({ arenaId: arenaId.toString() }, 'Arena results submitted to backend for mastery allocation');
+    } else {
+      logger.warn({ arenaId: arenaId.toString() }, 'Failed to submit arena results to backend (non-fatal)');
+    }
+  } catch (error) {
+    // Non-fatal error - don't fail the indexing process if backend is unavailable
+    logger.error(
+      { arenaId: arenaId.toString(), error: error instanceof Error ? error.message : String(error) },
+      'Error submitting arena results to backend (non-fatal)'
+    );
+  }
 }
 

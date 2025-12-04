@@ -13,6 +13,8 @@ services:
       - PORT=3001
       - LOG_LEVEL=info
       - CMC_API_KEY=5f98fdb0-3b70-4456-897a-d99a61fca066
+      - BACKEND_API_URL=http://host.docker.internal:8080
+      - BACKEND_API_KEY=cryptarena-indexer-secret-key-2024
     ports:
       - "3001:3001"
     depends_on:
