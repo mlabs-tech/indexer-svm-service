@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CORE MODELS
+// ============================================================================
+
+model ProtocolState {
+  id                  Int      @id @default(autoincrement())
+  programId           String   @unique @map("program_id")
+  admin               String
+  treasuryWallet      String   @map("treasury_wallet")
+  arenaDuration       Int      @default(60) @map("arena_duration")
+  currentArenaId      BigInt   @default(0) @map("current_arena_id")
+  maxPlayersPerArena  Int      @default(10) @map("max_players_per_arena")
+  maxSameAsset        Int      @default(3) @map("max_same_asset")
+  isPaused            Boolean  @default(false) @map("is_paused")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("protocol_state")
+}
+
+model Asset {
+  id          Int      @id @default(autoincrement())
+  index       Int      @unique
+  symbol      String   @db.VarChar(20)
+  name        String   @db.VarChar(100)
+  mintAddress String?  @map("mint_address") @db.VarChar(44)
+  decimals    Int      @default(9)
+  pythFeedId  String?  @map("pyth_feed_id") @db.VarChar(66)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  arenaAssets   ArenaAsset[]
+  playerEntries PlayerEntry[]
+  assetStats    AssetStats?
+
+  @@map("assets")
+}
+
+model Arena {
+  id             BigInt    @id @default(autoincrement())
+  arenaId        BigInt    @unique @map("arena_id")
+  pda            String    @unique @db.VarChar(44)
+  status         Int       @default(1)
+  playerCount    Int       @default(0) @map("player_count")
+  assetCount     Int       @default(0) @map("asset_count")
+  winningAsset   Int?      @map("winning_asset")
+  isSuspended    Boolean   @default(false) @map("is_suspended")
+  startTimestamp DateTime? @map("start_timestamp")
+  endTimestamp   DateTime? @map("end_timestamp")
+  totalPoolUsd   Decimal   @default(0) @map("total_pool_usd") @db.Decimal(20, 6)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  arenaAssets   ArenaAsset[]
+  playerEntries PlayerEntry[]
+  arenaEvents   ArenaEvent[]
+  playerActions PlayerAction[]
+  rewardClaims  RewardClaim[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("arenas")
+}
+
+model ArenaAsset {
+  id              BigInt   @id @default(autoincrement())
+  arenaId         BigInt   @map("arena_id")
+  pda             String   @unique @db.VarChar(44)
+  assetIndex      Int      @map("asset_index")
+  playerCount     Int      @default(0) @map("player_count")
+  startPrice      Decimal? @map("start_price") @db.Decimal(20, 8)
+  endPrice        Decimal? @map("end_price") @db.Decimal(20, 8)
+  priceMovementBps Int?    @map("price_movement_bps")
+  isWinner        Boolean  @default(false) @map("is_winner")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  arena Arena @relation(fields: [arenaId], references: [arenaId])
+  asset Asset @relation(fields: [assetIndex], references: [index])
+
+  @@unique([arenaId, assetIndex])
+  @@index([arenaId])
+  @@map("arena_assets")
+}
+
+model PlayerEntry {
+  id                  BigInt   @id @default(autoincrement())
+  arenaId             BigInt   @map("arena_id")
+  pda                 String   @unique @db.VarChar(44)
+  playerWallet        String   @map("player_wallet") @db.VarChar(44)
+  playerIndex         Int      @map("player_index")
+  assetIndex          Int      @map("asset_index")
+  tokenAmount         Decimal  @map("token_amount") @db.Decimal(30, 9)
+  usdValue            Decimal  @map("usd_value") @db.Decimal(20, 6)
+  entryTimestamp      DateTime @map("entry_timestamp")
+  isWinner            Boolean  @default(false) @map("is_winner")
+  ownTokensClaimed    Boolean  @default(false) @map("own_tokens_claimed")
+  rewardsClaimedCount Int      @default(0) @map("rewards_claimed_count")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  arena Arena @relation(fields: [arenaId], references: [arenaId])
+  asset Asset @relation(fields: [assetIndex], references: [index])
+
+  @@unique([arenaId, playerWallet])
+  @@index([arenaId])
+  @@index([playerWallet])
+  @@index([isWinner])
+  @@map("player_entries")
+}
+
+// ============================================================================
+// EVENT MODELS
+// ============================================================================
+
+model Transaction {
+  id              BigInt    @id @default(autoincrement())
+  signature       String    @unique @db.VarChar(88)
+  slot            BigInt
+  blockTime       DateTime? @map("block_time")
+  instructionType String    @map("instruction_type") @db.VarChar(50)
+  programId       String    @map("program_id") @db.VarChar(44)
+  success         Boolean   @default(true)
+  errorMessage    String?   @map("error_message")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  arenaEvents   ArenaEvent[]
+  playerActions PlayerAction[]
+  rewardClaims  RewardClaim[]
+
+  @@index([slot])
+  @@index([instructionType])
+  @@map("transactions")
+}
+
+model ArenaEvent {
+  id                   BigInt   @id @default(autoincrement())
+  arenaId              BigInt   @map("arena_id")
+  eventType            String   @map("event_type") @db.VarChar(50)
+  transactionSignature String?  @map("transaction_signature") @db.VarChar(88)
+  data                 Json?
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  // Relations
+  arena       Arena        @relation(fields: [arenaId], references: [arenaId])
+  transaction Transaction? @relation(fields: [transactionSignature], references: [signature])
+
+  @@index([arenaId])
+  @@index([eventType])
+  @@map("arena_events")
+}
+
+model PlayerAction {
+  id                   BigInt   @id @default(autoincrement())
+  arenaId              BigInt   @map("arena_id")
+  playerWallet         String   @map("player_wallet") @db.VarChar(44)
+  actionType           String   @map("action_type") @db.VarChar(50)
+  transactionSignature String?  @map("transaction_signature") @db.VarChar(88)
+  assetIndex           Int?     @map("asset_index")
+  tokenAmount          Decimal? @map("token_amount") @db.Decimal(30, 9)
+  usdValue             Decimal? @map("usd_value") @db.Decimal(20, 6)
+  data                 Json?
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  // Relations
+  arena       Arena        @relation(fields: [arenaId], references: [arenaId])
+  transaction Transaction? @relation(fields: [transactionSignature], references: [signature])
+
+  @@index([playerWallet])
+  @@map("player_actions")
+}
+
+model RewardClaim {
+  id                   BigInt   @id @default(autoincrement())
+  arenaId              BigInt   @map("arena_id")
+  winnerWallet         String   @map("winner_wallet") @db.VarChar(44)
+  loserWallet          String?  @map("loser_wallet") @db.VarChar(44)
+  transactionSignature String?  @map("transaction_signature") @db.VarChar(88)
+  assetIndex           Int      @map("asset_index")
+  claimType            String   @map("claim_type") @db.VarChar(20)
+  winnerAmount         Decimal  @map("winner_amount") @db.Decimal(30, 9)
+  treasuryAmount       Decimal  @default(0) @map("treasury_amount") @db.Decimal(30, 9)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  // Relations
+  arena       Arena        @relation(fields: [arenaId], references: [arenaId])
+  transaction Transaction? @relation(fields: [transactionSignature], references: [signature])
+
+  @@index([arenaId])
+  @@index([winnerWallet])
+  @@map("reward_claims")
+}
+
+// ============================================================================
+// ANALYTICS MODELS
+// ============================================================================
+
+model PlayerStats {
+  id              BigInt    @id @default(autoincrement())
+  playerWallet    String    @unique @map("player_wallet") @db.VarChar(44)
+  totalArenasPlayed Int     @default(0) @map("total_arenas_played")
+  totalWins       Int       @default(0) @map("total_wins")
+  totalLosses     Int       @default(0) @map("total_losses")
+  totalUsdWagered Decimal   @default(0) @map("total_usd_wagered") @db.Decimal(20, 6)
+  totalUsdWon     Decimal   @default(0) @map("total_usd_won") @db.Decimal(20, 6)
+  totalUsdLost    Decimal   @default(0) @map("total_usd_lost") @db.Decimal(20, 6)
+  favoriteAsset   Int?      @map("favorite_asset")
+  winRate         Decimal   @default(0) @map("win_rate") @db.Decimal(5, 2)
+  lastPlayedAt    DateTime? @map("last_played_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("player_stats")
+}
+
+model AssetStats {
+  id                   Int      @id @default(autoincrement())
+  assetIndex           Int      @unique @map("asset_index")
+  timesChosen          Int      @default(0) @map("times_chosen")
+  timesWon             Int      @default(0) @map("times_won")
+  winRate              Decimal  @default(0) @map("win_rate") @db.Decimal(5, 2)
+  totalVolumeUsd       Decimal  @default(0) @map("total_volume_usd") @db.Decimal(20, 6)
+  avgPriceMovementBps  Int      @default(0) @map("avg_price_movement_bps")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  asset Asset @relation(fields: [assetIndex], references: [index])
+
+  @@map("asset_stats")
+}
+
+model DailyStats {
+  id                 BigInt   @id @default(autoincrement())
+  date               DateTime @unique @db.Date
+  totalArenas        Int      @default(0) @map("total_arenas")
+  totalPlayers       Int      @default(0) @map("total_players")
+  uniquePlayers      Int      @default(0) @map("unique_players")
+  totalVolumeUsd     Decimal  @default(0) @map("total_volume_usd") @db.Decimal(20, 6)
+  totalTreasuryFees  Decimal  @default(0) @map("total_treasury_fees") @db.Decimal(20, 6)
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([date])
+  @@map("daily_stats")
+}
+
+// ============================================================================
+// PRICE HISTORY (for volatility charts)
+// ============================================================================
+
+model PriceHistory {
+  id          BigInt   @id @default(autoincrement())
+  assetIndex  Int      @map("asset_index")
+  price       Decimal  @db.Decimal(20, 8)
+  timestamp   DateTime @default(now())
+  source      String   @default("coinmarketcap") @db.VarChar(50)
+
+  @@index([assetIndex, timestamp])
+  @@index([timestamp])
+  @@map("price_history")
+}
+
+// ============================================================================
+// SYNC STATE
+// ============================================================================
+
+model SyncState {
+  id              Int      @id @default(autoincrement())
+  key             String   @unique
+  value           String
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("sync_state")
+}
+

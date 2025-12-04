@@ -1,0 +1,14 @@
+# View logs
+docker logs cryptarena-indexer -f
+
+# Stop services (keeps data)
+docker-compose down
+
+# Start services
+docker-compose up -d
+
+# Stop and DELETE all data
+docker-compose down -v
+
+# Check API health
+curl http://localhost:3001/health
