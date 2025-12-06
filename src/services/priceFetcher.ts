@@ -294,3 +294,120 @@ export function calculateVolatility(startPrice: number, currentPrice: number): n
   return ((currentPrice - startPrice) / startPrice) * 100;
 }
 
+/**
+ * Fetch prices from CoinMarketCap for specific symbols (on-demand)
+ * Returns a map of symbol -> price
+ */
+export async function fetchPricesFromCMC(symbols: string[]): Promise<Record<string, number>> {
+  const prices: Record<string, number> = {};
+  
+  if (!CMC_API_KEY) {
+    logger.warn('CMC_API_KEY not set, using mock prices for lifecycle');
+    // Return mock prices
+    const mockPrices: Record<string, number> = {
+      SOL: 200, TRUMP: 15, PUMP: 0.02, BONK: 0.00003, JUP: 1.2,
+      PENGU: 0.03, PYTH: 0.4, HNT: 6, FARTCOIN: 0.8, RAY: 5,
+      JTO: 3, KMNO: 0.1, MET: 0.01, W: 0.3,
+    };
+    for (const symbol of symbols) {
+      if (mockPrices[symbol]) {
+        prices[symbol] = mockPrices[symbol];
+      }
+    }
+    return prices;
+  }
+  
+  try {
+    // Get CMC IDs for the requested symbols
+    const symbolToInfo = Object.fromEntries(
+      Object.values(TOKEN_CMC_IDS).map(t => [t.symbol, t])
+    );
+    
+    const cmcIds = symbols
+      .map(s => symbolToInfo[s]?.cmcId)
+      .filter(Boolean)
+      .join(',');
+    
+    if (!cmcIds) {
+      logger.warn({ symbols }, 'No valid CMC IDs found for symbols');
+      return prices;
+    }
+    
+    const response = await fetch(`${CMC_API_URL}?id=${cmcIds}`, {
+      headers: {
+        'X-CMC_PRO_API_KEY': CMC_API_KEY,
+        'Accept': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`CMC API error: ${response.status}`);
+    }
+    
+    const data = await response.json() as { data: Record<string, { quote: { USD: { price: number } } }> };
+    
+    for (const symbol of symbols) {
+      const info = symbolToInfo[symbol];
+      if (!info) continue;
+      
+      const cmcData = data.data?.[info.cmcId.toString()];
+      if (cmcData?.quote?.USD?.price) {
+        prices[symbol] = cmcData.quote.USD.price;
+      }
+    }
+    
+    logger.info({ symbols, priceCount: Object.keys(prices).length }, 'Fetched prices from CMC');
+    
+  } catch (error) {
+    logger.error({ error, symbols }, 'Failed to fetch prices from CMC for lifecycle');
+  }
+  
+  return prices;
+}
+
+/**
+ * Get the actual price for an asset at a specific time (or closest available)
+ * This is used to calculate the real market value when a player enters
+ */
+export async function getPriceAtTime(assetIndex: number, timestamp: Date): Promise<number | null> {
+  // First try to get an exact or very close price (within 2 minutes)
+  const twoMinutesAgo = new Date(timestamp.getTime() - 2 * 60 * 1000);
+  const twoMinutesLater = new Date(timestamp.getTime() + 2 * 60 * 1000);
+  
+  const closestPrice = await prisma.priceHistory.findFirst({
+    where: {
+      assetIndex,
+      timestamp: {
+        gte: twoMinutesAgo,
+        lte: twoMinutesLater,
+      },
+    },
+    orderBy: [
+      {
+        timestamp: 'desc',
+      },
+    ],
+  });
+  
+  if (closestPrice) {
+    return Number(closestPrice.price);
+  }
+  
+  // If no recent price found, get the latest available price
+  const latestPrice = await prisma.priceHistory.findFirst({
+    where: { assetIndex },
+    orderBy: { timestamp: 'desc' },
+  });
+  
+  if (latestPrice) {
+    logger.warn(
+      { assetIndex, requestedTime: timestamp, latestPriceTime: latestPrice.timestamp },
+      'No price found within 2 minutes, using latest available price'
+    );
+    return Number(latestPrice.price);
+  }
+  
+  logger.error({ assetIndex, timestamp }, 'No price data available for asset');
+  return null;
+}
+

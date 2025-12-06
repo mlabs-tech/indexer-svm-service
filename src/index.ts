@@ -3,6 +3,8 @@ import { startServer, stopServer } from './api/server';
 import { startWebSocketListener, stopWebSocketListener } from './listeners/websocket';
 import { startTransactionPoller, stopTransactionPoller, backfillTransactions } from './listeners/transactionPoller';
 import { startPriceFetcher, stopPriceFetcher } from './services/priceFetcher';
+import { getArenaLifecycleManager } from './services/arenaLifecycle';
+import { cacheService } from './services/cacheService';
 import logger from './utils/logger';
 import config from './config';
 
@@ -15,6 +17,9 @@ async function main(): Promise<void> {
   try {
     // Connect to database
     await connectDatabase();
+
+    // Connect to Redis cache
+    await cacheService.connect();
 
     // Start API server
     await startServer();
@@ -35,6 +40,17 @@ async function main(): Promise<void> {
 
     // Start price fetcher cron (fetches prices every 30 seconds)
     startPriceFetcher();
+
+    // Start arena lifecycle manager (auto-start and auto-end arenas)
+    const lifecycleManager = getArenaLifecycleManager();
+    if (process.env.ADMIN_PRIVATE_KEY) {
+      await lifecycleManager.start();
+      // Recover any missed arenas on startup
+      await lifecycleManager.recoverMissedArenas();
+      logger.info('  🤖 Arena Lifecycle: Active (auto-start & auto-end)');
+    } else {
+      logger.warn('  🤖 Arena Lifecycle: DISABLED (ADMIN_PRIVATE_KEY not set)');
+    }
 
     logger.info('═'.repeat(60));
     logger.info('Indexer service fully started');
@@ -58,6 +74,12 @@ async function shutdown(): Promise<void> {
   logger.info('Shutting down indexer service...');
 
   try {
+    // Stop arena lifecycle manager
+    const lifecycleManager = getArenaLifecycleManager();
+    if (lifecycleManager.isActive()) {
+      await lifecycleManager.stop();
+    }
+
     // Stop price fetcher
     stopPriceFetcher();
 
@@ -69,6 +91,9 @@ async function shutdown(): Promise<void> {
 
     // Stop API server
     await stopServer();
+
+    // Disconnect cache service
+    await cacheService.disconnect();
 
     // Disconnect database
     await disconnectDatabase();

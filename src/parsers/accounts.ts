@@ -4,6 +4,7 @@ import {
   ArenaAccount,
   ArenaAssetAccount,
   PlayerEntryAccount,
+  WhitelistedTokenAccount,
   ArenaStatus,
 } from '../types/accounts';
 
@@ -13,6 +14,7 @@ const DISCRIMINATORS = {
   Arena: Buffer.from([243, 215, 44, 44, 231, 211, 232, 168]),
   ArenaAsset: Buffer.from([30, 253, 113, 69, 230, 167, 240, 40]),
   PlayerEntry: Buffer.from([158, 6, 39, 104, 234, 4, 153, 255]),
+  WhitelistedToken: Buffer.from([217, 124, 32, 114, 40, 167, 143, 233]),
 };
 
 /**
@@ -200,6 +202,9 @@ export function parsePlayerEntry(data: Buffer): PlayerEntryAccount {
   const ownTokensClaimed = data.readUInt8(offset) === 1;
   offset += 1;
 
+  const treasuryFeeClaimed = data.readUInt8(offset) === 1;
+  offset += 1;
+
   // Read u128 as two u64s
   const rewardsClaimedBitmapLow = data.readBigUInt64LE(offset);
   offset += 8;
@@ -219,7 +224,33 @@ export function parsePlayerEntry(data: Buffer): PlayerEntryAccount {
     entryTimestamp,
     isWinner,
     ownTokensClaimed,
+    treasuryFeeClaimed,
     rewardsClaimedBitmap,
+    bump,
+  };
+}
+
+/**
+ * Parse WhitelistedToken account
+ */
+export function parseWhitelistedToken(data: Buffer): WhitelistedTokenAccount {
+  let offset = 8; // Skip discriminator
+
+  const mint = new PublicKey(data.slice(offset, offset + 32));
+  offset += 32;
+
+  const assetIndex = data.readUInt8(offset);
+  offset += 1;
+
+  const isActive = data.readUInt8(offset) === 1;
+  offset += 1;
+
+  const bump = data.readUInt8(offset);
+
+  return {
+    mint,
+    assetIndex,
+    isActive,
     bump,
   };
 }
@@ -230,5 +261,6 @@ export default {
   parseArena,
   parseArenaAsset,
   parsePlayerEntry,
+  parseWhitelistedToken,
 };
 

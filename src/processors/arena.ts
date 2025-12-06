@@ -4,6 +4,8 @@ import { ArenaStatus, ArenaStatusLabels } from '../types/accounts';
 import prisma from '../db';
 import logger from '../utils/logger';
 import { submitArenaResults } from '../services/backendApi';
+import { getArenaLifecycleManager } from '../services/arenaLifecycle';
+import { cacheService } from '../services/cacheService';
 
 /**
  * Process Arena account update
@@ -48,6 +50,9 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
       data: arenaData,
     });
 
+    // Invalidate cache for this arena
+    await cacheService.invalidateArena(arena.id.toString());
+
     // Create event if status changed
     if (statusChanged) {
       const eventType = getStatusChangeEventType(existingArena.status, arena.status);
@@ -65,11 +70,28 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
         });
       }
 
+      // If arena just became Ready (10 players), trigger auto-start
+      if (arena.status === ArenaStatus.Ready && existingArena.status === ArenaStatus.Waiting) {
+        logger.info({ arenaId: arena.id.toString() }, 'Arena ready with 10 players, triggering auto-start');
+        
+        // Get asset indices from arena assets
+        const arenaAssets = await prisma.arenaAsset.findMany({
+          where: { arenaId: arena.id },
+        });
+        const assetIndices = arenaAssets.map(a => a.assetIndex);
+        
+        // Trigger lifecycle manager to start the arena
+        const lifecycleManager = getArenaLifecycleManager();
+        if (lifecycleManager.isActive()) {
+          await lifecycleManager.onArenaReady(arena.id, assetIndices);
+        }
+      }
+
       // If arena just ended (Ended or Finalized status), update player win/loss stats
       if (arena.status === ArenaStatus.Ended && arena.winningAsset !== 255) {
         await updatePlayerWinLossStats(arena.id, arena.winningAsset);
         
-        // Submit results to backend for mastery point allocation
+        // Submit results to backend for mastery point allocation AND quest updates
         await submitArenaResultsToBackend(arena.id, arena.winningAsset);
       }
     }
@@ -89,6 +111,9 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
         ...arenaData,
       },
     });
+
+    // Invalidate cache for new arena
+    await cacheService.invalidateArena(arena.id.toString());
 
     // Create arena created event
     await prisma.arenaEvent.create({

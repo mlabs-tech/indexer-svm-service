@@ -101,7 +101,9 @@ model PlayerEntry {
   playerIndex         Int      @map("player_index")
   assetIndex          Int      @map("asset_index")
   tokenAmount         Decimal  @map("token_amount") @db.Decimal(30, 9)
-  usdValue            Decimal  @map("usd_value") @db.Decimal(20, 6)
+  usdValue            Decimal  @map("usd_value") @db.Decimal(20, 6)  // User's submitted value
+  entryPrice          Decimal? @map("entry_price") @db.Decimal(20, 6)  // Actual token price at entry
+  actualUsdValue      Decimal? @map("actual_usd_value") @db.Decimal(20, 6)  // Actual market value
   entryTimestamp      DateTime @map("entry_timestamp")
   isWinner            Boolean  @default(false) @map("is_winner")
   ownTokensClaimed    Boolean  @default(false) @map("own_tokens_claimed")
@@ -283,5 +285,28 @@ model SyncState {
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("sync_state")
+}
+
+// ============================================================================
+// ARENA LIFECYCLE MANAGEMENT
+// ============================================================================
+
+model ArenaProcessingState {
+  id           BigInt    @id @default(autoincrement())
+  arenaId      BigInt    @unique @map("arena_id")
+  startStatus  String    @default("pending") @map("start_status") // pending, processing, completed, failed
+  endStatus    String    @default("pending") @map("end_status")   // pending, scheduled, processing, completed, failed
+  startJobId   String?   @map("start_job_id")
+  endJobId     String?   @map("end_job_id")
+  startError   String?   @map("start_error")
+  endError     String?   @map("end_error")
+  retryCount   Int       @default(0) @map("retry_count")
+  scheduledEndTime DateTime? @map("scheduled_end_time")
+  startedAt    DateTime? @map("started_at")
+  endedAt      DateTime? @map("ended_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("arena_processing_state")
 }
 

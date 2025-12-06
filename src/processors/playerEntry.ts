@@ -2,6 +2,8 @@ import { PublicKey } from '@solana/web3.js';
 import { parsePlayerEntry } from '../parsers/accounts';
 import prisma from '../db';
 import logger from '../utils/logger';
+import { getPriceAtTime } from '../services/priceFetcher';
+import { cacheService } from '../services/cacheService';
 
 /**
  * Process PlayerEntry account update
@@ -25,8 +27,35 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
 
   // Convert amounts
   const tokenAmount = Number(entry.amount) / 1e9;
-  const usdValue = Number(entry.usdValue) / 1e6;
+  const usdValue = Number(entry.usdValue) / 1e6;  // User's submitted value
   const entryTimestamp = new Date(Number(entry.entryTimestamp) * 1000);
+
+  // Fetch actual market price at entry time
+  let entryPrice: number | null = null;
+  let actualUsdValue: number | null = null;
+  
+  try {
+    entryPrice = await getPriceAtTime(entry.assetIndex, entryTimestamp);
+    if (entryPrice !== null) {
+      actualUsdValue = tokenAmount * entryPrice;
+      const slippage = actualUsdValue - usdValue;
+      const slippagePercent = (slippage / usdValue) * 100;
+      
+      logger.info(
+        {
+          assetIndex: entry.assetIndex,
+          submittedUsd: usdValue,
+          actualUsd: actualUsdValue,
+          slippage,
+          slippagePercent: slippagePercent.toFixed(2) + '%',
+          entryPrice,
+        },
+        'Price slippage detected at entry'
+      );
+    }
+  } catch (error) {
+    logger.warn({ error, assetIndex: entry.assetIndex }, 'Failed to fetch price at entry time');
+  }
 
   // Count claimed rewards from bitmap
   let rewardsClaimedCount = 0;
@@ -45,7 +74,9 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     playerIndex: entry.playerIndex,
     assetIndex: entry.assetIndex,
     tokenAmount,
-    usdValue,
+    usdValue,  // User's submitted value
+    entryPrice,  // Actual market price at entry
+    actualUsdValue,  // Actual market value (token_amount * entry_price)
     entryTimestamp,
     isWinner: entry.isWinner,
     ownTokensClaimed: entry.ownTokensClaimed,
@@ -62,6 +93,9 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
       where: { pda },
       data: entryData,
     });
+
+    // Invalidate cache for this arena
+    await cacheService.invalidateArena(arena.arenaId.toString());
 
     // Update player stats if winner status changed and arena is finalized
     if (!wasWinner && isNowWinner) {
@@ -149,6 +183,9 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         ...entryData,
       },
     });
+
+    // Invalidate cache for this arena
+    await cacheService.invalidateArena(arena.arenaId.toString());
 
     // Create player action event
     await prisma.playerAction.create({

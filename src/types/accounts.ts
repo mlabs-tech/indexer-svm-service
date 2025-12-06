@@ -83,7 +83,18 @@ export interface PlayerEntryAccount {
   entryTimestamp: bigint;
   isWinner: boolean;
   ownTokensClaimed: boolean;
+  treasuryFeeClaimed: boolean;
   rewardsClaimedBitmap: bigint;
+  bump: number;
+}
+
+/**
+ * WhitelistedToken account structure
+ */
+export interface WhitelistedTokenAccount {
+  mint: PublicKey;
+  assetIndex: number;
+  isActive: boolean;
   bump: number;
 }
 

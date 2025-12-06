@@ -45,11 +45,22 @@ export function getPlayerEntryPda(arenaPda: PublicKey, playerPubkey: PublicKey):
   );
 }
 
+/**
+ * Derive WhitelistedToken PDA
+ */
+export function getWhitelistedTokenPda(mintPubkey: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('whitelist_token_v2'), mintPubkey.toBuffer()],
+    PROGRAM_ID
+  );
+}
+
 export default {
   getGlobalStatePda,
   getArenaPda,
   getArenaAssetPda,
   getPlayerEntryPda,
+  getWhitelistedTokenPda,
   PROGRAM_ID,
 };
 

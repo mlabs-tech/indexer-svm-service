@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import prisma from '../../db';
 import { ArenaStatusLabels, ArenaStatus, getAssetSymbol } from '../../types/accounts';
+import { calculateRealTimePoolValue, calculateRealTimePoolValueBatch } from '../../utils/poolCalculator';
+import { cacheService } from '../../services/cacheService';
 
 export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
   // List arenas with pagination
@@ -38,6 +40,10 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       prisma.arena.count({ where }),
     ]);
 
+    // Calculate real-time pool values for all arenas in batch
+    const arenaIds = arenas.map(a => a.arenaId);
+    const poolValues = await calculateRealTimePoolValueBatch(arenaIds);
+
     return {
       data: arenas.map((arena) => ({
         id: arena.id.toString(),
@@ -52,7 +58,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
         isSuspended: arena.isSuspended,
         startTimestamp: arena.startTimestamp?.toISOString() || null,
         endTimestamp: arena.endTimestamp?.toISOString() || null,
-        totalPoolUsd: arena.totalPoolUsd ? Number(arena.totalPoolUsd) : 0,
+        totalPoolUsd: poolValues.get(arena.arenaId.toString()) || 0, // Real-time calculated value
         createdAt: arena.createdAt.toISOString(),
         arenaAssets: arena.arenaAssets.map((asset) => ({
           assetIndex: asset.assetIndex,
@@ -98,9 +104,17 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     }));
   });
 
-  // Get current arena (the one accepting new players - Waiting status)
+  // Get current arena (the one accepting new players - Waiting status) - with caching
   // If no waiting arena exists, returns null (frontend should show "Be the first!")
   app.get('/api/v1/arenas/current', async () => {
+    const cacheKey = 'arenas:current';
+
+    // Try to get from cache first
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     // Find the arena that is currently accepting players (Waiting or Ready status)
     const currentArena = await prisma.arena.findFirst({
       where: {
@@ -123,6 +137,8 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
             assetIndex: true,
             tokenAmount: true,
             usdValue: true,
+            entryPrice: true,
+            actualUsdValue: true,
             entryTimestamp: true,
           },
           orderBy: { playerIndex: 'asc' },
@@ -130,50 +146,62 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
+    let response;
+
     if (!currentArena) {
       // No arena currently accepting players - next player will start a new one
       // Get the protocol state to know what the next arena ID would be
       const protocolState = await prisma.protocolState.findFirst();
       
-      return {
+      response = {
         exists: false,
         nextArenaId: protocolState ? (Number(protocolState.currentArenaId) + 1).toString() : '1',
         message: 'No arena currently accepting players. Be the first to start a new arena!',
       };
+    } else {
+      // Calculate real-time total pool value using latest market prices
+      const realTimePoolValue = await calculateRealTimePoolValue(currentArena.arenaId);
+
+      // Serialize BigInt fields to strings for JSON response
+      response = {
+        exists: true,
+        arena: {
+          id: currentArena.id.toString(),
+          arenaId: currentArena.arenaId.toString(),
+          pda: currentArena.pda,
+          status: currentArena.status,
+          statusLabel: ArenaStatusLabels[currentArena.status as ArenaStatus],
+          playerCount: currentArena.playerCount,
+          assetCount: currentArena.assetCount,
+          totalPoolUsd: realTimePoolValue, // Real-time calculated value
+          startTimestamp: currentArena.startTimestamp?.toISOString() || null,
+          endTimestamp: currentArena.endTimestamp?.toISOString() || null,
+          winningAsset: currentArena.winningAsset,
+          maxPlayers: 10, // From program config
+          playerEntries: currentArena.playerEntries.map((entry) => ({
+            playerWallet: entry.playerWallet,
+            playerIndex: entry.playerIndex,
+            assetIndex: entry.assetIndex,
+            assetSymbol: getAssetSymbol(entry.assetIndex),
+            tokenAmount: entry.tokenAmount ? Number(entry.tokenAmount) : 0,
+            usdValue: entry.usdValue ? Number(entry.usdValue) : 0,
+            entryPrice: entry.entryPrice ? Number(entry.entryPrice) : undefined,
+            actualUsdValue: entry.actualUsdValue ? Number(entry.actualUsdValue) : undefined,
+            entryTimestamp: entry.entryTimestamp?.toISOString() || null,
+          })),
+          arenaAssets: currentArena.arenaAssets.map((asset) => ({
+            assetIndex: asset.assetIndex,
+            assetSymbol: getAssetSymbol(asset.assetIndex),
+            playerCount: asset.playerCount,
+          })),
+        },
+      };
     }
 
-    // Serialize BigInt fields to strings for JSON response
-    return {
-      exists: true,
-      arena: {
-        id: currentArena.id.toString(),
-        arenaId: currentArena.arenaId.toString(),
-        pda: currentArena.pda,
-        status: currentArena.status,
-        statusLabel: ArenaStatusLabels[currentArena.status as ArenaStatus],
-        playerCount: currentArena.playerCount,
-        assetCount: currentArena.assetCount,
-        totalPoolUsd: currentArena.totalPoolUsd ? Number(currentArena.totalPoolUsd) : 0,
-        startTimestamp: currentArena.startTimestamp?.toISOString() || null,
-        endTimestamp: currentArena.endTimestamp?.toISOString() || null,
-        winningAsset: currentArena.winningAsset,
-        maxPlayers: 10, // From program config
-        playerEntries: currentArena.playerEntries.map((entry) => ({
-          playerWallet: entry.playerWallet,
-          playerIndex: entry.playerIndex,
-          assetIndex: entry.assetIndex,
-          assetSymbol: getAssetSymbol(entry.assetIndex),
-          tokenAmount: entry.tokenAmount ? Number(entry.tokenAmount) : 0,
-          usdValue: entry.usdValue ? Number(entry.usdValue) : 0,
-          entryTimestamp: entry.entryTimestamp?.toISOString() || null,
-        })),
-        arenaAssets: currentArena.arenaAssets.map((asset) => ({
-          assetIndex: asset.assetIndex,
-          assetSymbol: getAssetSymbol(asset.assetIndex),
-          playerCount: asset.playerCount,
-        })),
-      },
-    };
+    // Cache for 2 seconds (frequently changing as players join)
+    await cacheService.set(cacheKey, response, 2);
+    
+    return response;
   });
 
   // Check if a specific wallet is already in the current waiting arena
@@ -221,9 +249,16 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  // Get arena by ID
+  // Get arena by ID (with caching)
   app.get('/api/v1/arenas/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
+    const cacheKey = `arena:${id}`;
+
+    // Try to get from cache first
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     const arena = await prisma.arena.findUnique({
       where: { arenaId: BigInt(id) },
@@ -239,8 +274,11 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Arena not found' });
     }
 
+    // Calculate real-time total pool value using latest market prices
+    const realTimePoolValue = await calculateRealTimePoolValue(arena.arenaId);
+
     // Serialize all fields properly
-    return {
+    const response = {
       id: arena.id.toString(),
       arenaId: arena.arenaId.toString(),
       pda: arena.pda,
@@ -253,7 +291,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       isSuspended: arena.isSuspended,
       startTimestamp: arena.startTimestamp?.toISOString() || null,
       endTimestamp: arena.endTimestamp?.toISOString() || null,
-      totalPoolUsd: arena.totalPoolUsd ? Number(arena.totalPoolUsd) : 0,
+      totalPoolUsd: realTimePoolValue, // Real-time calculated value
       createdAt: arena.createdAt.toISOString(),
       arenaAssets: arena.arenaAssets.map((asset) => ({
         id: asset.id.toString(),
@@ -277,6 +315,8 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
         assetSymbol: getAssetSymbol(entry.assetIndex),
         tokenAmount: entry.tokenAmount ? Number(entry.tokenAmount) : 0,
         usdValue: entry.usdValue ? Number(entry.usdValue) : 0,
+        entryPrice: entry.entryPrice ? Number(entry.entryPrice) : undefined,
+        actualUsdValue: entry.actualUsdValue ? Number(entry.actualUsdValue) : undefined,
         entryTimestamp: entry.entryTimestamp?.toISOString() || null,
         isWinner: entry.isWinner,
         ownTokensClaimed: entry.ownTokensClaimed,
@@ -284,6 +324,21 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
         rewardsClaimedBitmap: entry.rewardsClaimedBitmap || '0',
       })),
     };
+
+    // Cache with appropriate TTL based on arena status
+    // Active/Starting/Ending arenas: 2 seconds (frequently changing)
+    // Ended arenas: 60 seconds (immutable)
+    // Other statuses: 10 seconds
+    let cacheTtl = 10;
+    if (arena.status === ArenaStatus.Active || arena.status === ArenaStatus.Starting || arena.status === ArenaStatus.Ending) {
+      cacheTtl = 2;
+    } else if (arena.status === ArenaStatus.Ended) {
+      cacheTtl = 60;
+    }
+
+    await cacheService.set(cacheKey, response, cacheTtl);
+    
+    return response;
   });
 
   // Get arena players
@@ -297,6 +352,11 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
 
     return players.map((entry) => ({
       ...entry,
+      arenaId: entry.arenaId.toString(),
+      tokenAmount: entry.tokenAmount ? Number(entry.tokenAmount) : 0,
+      usdValue: entry.usdValue ? Number(entry.usdValue) : 0,
+      entryPrice: entry.entryPrice ? Number(entry.entryPrice) : undefined,
+      actualUsdValue: entry.actualUsdValue ? Number(entry.actualUsdValue) : undefined,
       assetSymbol: getAssetSymbol(entry.assetIndex),
     }));
   });
