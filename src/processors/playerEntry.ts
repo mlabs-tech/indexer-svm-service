@@ -32,7 +32,10 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
   // Convert prices (8 decimals)
   const startPrice = entry.startPrice > 0n ? Number(entry.startPrice) / 1e8 : null;
   const endPrice = entry.endPrice > 0n ? Number(entry.endPrice) / 1e8 : null;
-  const priceMovementBps = Number(entry.priceMovement);
+  // Store raw price movement from Solana (10^8 precision)
+  // To convert to percentage: priceMovementRaw / 1,000,000
+  // e.g., 257863 = 0.257863%
+  const priceMovementRaw = entry.priceMovement;
 
   const existingEntry = await prisma.playerEntry.findUnique({
     where: { pda },
@@ -69,7 +72,7 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     await cacheService.invalidateArena(arena.arenaId.toString());
 
     // Update ArenaAsset with price data from PlayerEntry
-    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementBps, entry.isWinner);
+    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementRaw, entry.isWinner);
 
     // Update player stats if winner status changed
     if (!wasWinner && isNowWinner) {
@@ -95,7 +98,7 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         player: entry.player.toString().slice(0, 8),
         isWinner: entry.isWinner,
         claimed: entry.hasClaimed,
-        priceMovement: priceMovementBps,
+        priceMovement: priceMovementRaw.toString(),
       },
       'PlayerEntry updated'
     );
@@ -112,7 +115,7 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     await cacheService.invalidateArena(arena.arenaId.toString());
 
     // Create/update ArenaAsset for this token
-    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementBps, entry.isWinner);
+    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementRaw, entry.isWinner);
 
     // Create player action event
     await prisma.playerAction.create({
@@ -167,7 +170,7 @@ async function updateArenaAssetFromPlayerEntry(
   assetIndex: number,
   startPrice: number | null,
   endPrice: number | null,
-  priceMovementBps: number,
+  priceMovementRaw: bigint,
   isWinner: boolean
 ): Promise<void> {
   // Generate a deterministic PDA-like string for the ArenaAsset
@@ -178,7 +181,7 @@ async function updateArenaAssetFromPlayerEntry(
     update: {
       startPrice,
       endPrice,
-      priceMovementBps,
+      priceMovementRaw,
       isWinner,
       playerCount: 1, // Each token can only have 1 player in cryptarena-sol
     },
@@ -189,7 +192,7 @@ async function updateArenaAssetFromPlayerEntry(
       playerCount: 1,
       startPrice,
       endPrice,
-      priceMovementBps,
+      priceMovementRaw,
       isWinner,
     },
   });

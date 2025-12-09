@@ -64,7 +64,7 @@ export interface PlayerEntryAccount {
   entryTimestamp: bigint;
   startPrice: bigint;      // Price at arena start (8 decimals)
   endPrice: bigint;        // Price at arena end (8 decimals)
-  priceMovement: bigint;   // Price movement in basis points
+  priceMovement: bigint;   // Price movement with 10^8 precision (divide by 10000 to get BPS)
   isWinner: boolean;
   hasClaimed: boolean;
   bump: number;

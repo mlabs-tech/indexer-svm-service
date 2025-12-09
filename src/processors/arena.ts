@@ -268,7 +268,9 @@ async function submitArenaResultsToBackend(arenaId: bigint, winningAsset: number
 
     const assetVolatility = new Map<number, number>();
     for (const asset of arenaAssets) {
-      assetVolatility.set(asset.assetIndex, Number(asset.priceMovementBps) || 0);
+      // Convert raw movement (10^8 precision) to BPS for compatibility
+      const bps = asset.priceMovementRaw ? Math.round(Number(asset.priceMovementRaw) / 10000) : 0;
+      assetVolatility.set(asset.assetIndex, bps);
     }
 
     const formattedEntries = playerEntries.map(entry => ({

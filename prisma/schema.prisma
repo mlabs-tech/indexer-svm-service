@@ -79,7 +79,7 @@ model ArenaAsset {
   playerCount     Int      @default(0) @map("player_count")
   startPrice      Decimal? @map("start_price") @db.Decimal(20, 8)
   endPrice        Decimal? @map("end_price") @db.Decimal(20, 8)
-  priceMovementBps Int?    @map("price_movement_bps")
+  priceMovementRaw BigInt?  @map("price_movement_raw")  // Raw value from Solana (10^8 precision)
   isWinner        Boolean  @default(false) @map("is_winner")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
