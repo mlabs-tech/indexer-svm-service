@@ -8,7 +8,7 @@ import { getArenaLifecycleManager } from '../services/arenaLifecycle';
 import { cacheService } from '../services/cacheService';
 
 /**
- * Process Arena account update
+ * Process Arena account update (cryptarena-sol)
  */
 export async function processArena(pubkey: PublicKey, data: Buffer): Promise<void> {
   const arena = parseArena(data);
@@ -22,8 +22,8 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
     ? new Date(Number(arena.endTimestamp) * 1000) 
     : null;
 
-  // Calculate total pool in USD (6 decimals)
-  const totalPoolUsd = Number(arena.totalPool) / 1_000_000;
+  // Total pool is in lamports, convert to SOL
+  const totalPoolSol = Number(arena.totalPool) / 1e9;
 
   const existingArena = await prisma.arena.findUnique({
     where: { arenaId: arena.id },
@@ -33,12 +33,12 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
     pda,
     status: arena.status,
     playerCount: arena.playerCount,
-    assetCount: arena.assetCount,
+    assetCount: arena.playerCount, // In cryptarena-sol, each player = 1 unique asset
     winningAsset: arena.winningAsset === 255 ? null : arena.winningAsset,
-    isSuspended: arena.isSuspended,
+    isSuspended: arena.isCanceled, // Map isCanceled to isSuspended for compatibility
     startTimestamp,
     endTimestamp,
-    totalPoolUsd,
+    totalPoolUsd: totalPoolSol, // Store SOL amount (can be converted to USD later)
   };
 
   if (existingArena) {
@@ -55,52 +55,65 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
 
     // Create event if status changed
     if (statusChanged) {
-      const eventType = getStatusChangeEventType(existingArena.status, arena.status);
+      const eventType = getStatusChangeEventType(existingArena.status, arena.status, arena.isCanceled);
       if (eventType) {
         await prisma.arenaEvent.create({
           data: {
             arenaId: arena.id,
             eventType,
             data: {
-              previousStatus: ArenaStatusLabels[existingArena.status as ArenaStatus],
-              newStatus: ArenaStatusLabels[arena.status],
+              previousStatus: ArenaStatusLabels[existingArena.status as ArenaStatus] || `Unknown(${existingArena.status})`,
+              newStatus: ArenaStatusLabels[arena.status] || `Unknown(${arena.status})`,
               winningAsset: arena.winningAsset !== 255 ? arena.winningAsset : null,
+              isCanceled: arena.isCanceled,
+              treasuryClaimed: arena.treasuryClaimed,
             },
           },
         });
       }
 
-      // If arena just became Ready (10 players), trigger auto-start
-      if (arena.status === ArenaStatus.Ready && existingArena.status === ArenaStatus.Waiting) {
-        logger.info({ arenaId: arena.id.toString() }, 'Arena ready with 10 players, triggering auto-start');
+      // If arena just became Active, trigger lifecycle manager
+      if (arena.status === ArenaStatus.Active && existingArena.status === ArenaStatus.Waiting) {
+        logger.info({ arenaId: arena.id.toString() }, 'Arena started by admin');
         
-        // Get asset indices from arena assets
-        const arenaAssets = await prisma.arenaAsset.findMany({
+        // Get player entries to determine asset indices
+        const playerEntries = await prisma.playerEntry.findMany({
           where: { arenaId: arena.id },
         });
-        const assetIndices = arenaAssets.map(a => a.assetIndex);
+        const assetIndices = playerEntries.map(e => e.assetIndex);
         
-        // Trigger lifecycle manager to start the arena
+        // Trigger lifecycle manager
         const lifecycleManager = getArenaLifecycleManager();
         if (lifecycleManager.isActive()) {
           await lifecycleManager.onArenaReady(arena.id, assetIndices);
         }
       }
 
-      // If arena just ended (Ended or Finalized status), update player win/loss stats
+      // If arena just ended, update player win/loss stats
       if (arena.status === ArenaStatus.Ended && arena.winningAsset !== 255) {
         await updatePlayerWinLossStats(arena.id, arena.winningAsset);
-        
-        // Submit results to backend for mastery point allocation AND quest updates
         await submitArenaResultsToBackend(arena.id, arena.winningAsset);
+      }
+
+      // If arena was canceled (tie scenario)
+      if (arena.status === ArenaStatus.Canceled && arena.isCanceled) {
+        logger.info({ arenaId: arena.id.toString() }, 'Arena canceled (tie detected)');
+        await prisma.arenaEvent.create({
+          data: {
+            arenaId: arena.id,
+            eventType: 'arena_canceled',
+            data: { reason: 'tie_detected' },
+          },
+        });
       }
     }
 
     logger.debug(
       { 
         arenaId: arena.id.toString(), 
-        status: ArenaStatusLabels[arena.status],
-        players: arena.playerCount 
+        status: ArenaStatusLabels[arena.status] || `Unknown(${arena.status})`,
+        players: arena.playerCount,
+        totalPoolSol,
       },
       'Arena updated'
     );
@@ -129,17 +142,17 @@ export async function processArena(pubkey: PublicKey, data: Buffer): Promise<voi
 }
 
 /**
- * Determine event type based on status change
+ * Determine event type based on status change (cryptarena-sol statuses)
  */
-function getStatusChangeEventType(oldStatus: number, newStatus: number): string | null {
-  if (newStatus === ArenaStatus.Ready && oldStatus === ArenaStatus.Waiting) {
-    return 'arena_full';
-  }
-  if (newStatus === ArenaStatus.Active && oldStatus !== ArenaStatus.Active) {
+function getStatusChangeEventType(oldStatus: number, newStatus: number, isCanceled: boolean): string | null {
+  if (newStatus === ArenaStatus.Active && oldStatus === ArenaStatus.Waiting) {
     return 'arena_started';
   }
   if (newStatus === ArenaStatus.Ended && oldStatus !== ArenaStatus.Ended) {
     return 'arena_ended';
+  }
+  if (newStatus === ArenaStatus.Canceled || isCanceled) {
+    return 'arena_canceled';
   }
   return null;
 }
@@ -148,7 +161,6 @@ function getStatusChangeEventType(oldStatus: number, newStatus: number): string 
  * Update player win/loss stats when arena ends
  */
 async function updatePlayerWinLossStats(arenaId: bigint, winningAsset: number): Promise<void> {
-  // Get all player entries for this arena
   const playerEntries = await prisma.playerEntry.findMany({
     where: { arenaId },
   });
@@ -165,10 +177,9 @@ async function updatePlayerWinLossStats(arenaId: bigint, winningAsset: number): 
       },
     });
 
-    if (existingAction) continue; // Already processed
+    if (existingAction) continue;
 
     if (isWinner) {
-      // Update winner stats
       await prisma.playerStats.update({
         where: { playerWallet: entry.playerWallet },
         data: {
@@ -191,7 +202,6 @@ async function updatePlayerWinLossStats(arenaId: bigint, winningAsset: number): 
         'Player won - stats updated'
       );
     } else {
-      // Update loser stats
       await prisma.playerStats.update({
         where: { playerWallet: entry.playerWallet },
         data: {
@@ -242,7 +252,6 @@ async function updatePlayerWinLossStats(arenaId: bigint, winningAsset: number): 
  */
 async function submitArenaResultsToBackend(arenaId: bigint, winningAsset: number): Promise<void> {
   try {
-    // Get all player entries for this arena
     const playerEntries = await prisma.playerEntry.findMany({
       where: { arenaId },
     });
@@ -257,13 +266,11 @@ async function submitArenaResultsToBackend(arenaId: bigint, winningAsset: number
       where: { arenaId },
     });
 
-    // Create a map of asset index to volatility (price movement in bps)
     const assetVolatility = new Map<number, number>();
     for (const asset of arenaAssets) {
       assetVolatility.set(asset.assetIndex, Number(asset.priceMovementBps) || 0);
     }
 
-    // Format entries for the backend API with volatility
     const formattedEntries = playerEntries.map(entry => ({
       playerWallet: entry.playerWallet,
       assetIndex: entry.assetIndex,
@@ -275,16 +282,14 @@ async function submitArenaResultsToBackend(arenaId: bigint, winningAsset: number
     const success = await submitArenaResults(arenaId, formattedEntries, winningAsset);
     
     if (success) {
-      logger.info({ arenaId: arenaId.toString() }, 'Arena results submitted to backend for mastery allocation');
+      logger.info({ arenaId: arenaId.toString() }, 'Arena results submitted to backend');
     } else {
-      logger.warn({ arenaId: arenaId.toString() }, 'Failed to submit arena results to backend (non-fatal)');
+      logger.warn({ arenaId: arenaId.toString() }, 'Failed to submit arena results to backend');
     }
   } catch (error) {
-    // Non-fatal error - don't fail the indexing process if backend is unavailable
     logger.error(
       { arenaId: arenaId.toString(), error: error instanceof Error ? error.message : String(error) },
-      'Error submitting arena results to backend (non-fatal)'
+      'Error submitting arena results to backend'
     );
   }
 }
-

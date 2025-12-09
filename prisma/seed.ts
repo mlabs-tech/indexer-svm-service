@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const ASSETS = [
+  // Solana tokens
   { index: 0, symbol: 'SOL', name: 'Solana' },
   { index: 1, symbol: 'TRUMP', name: 'Official Trump' },
   { index: 2, symbol: 'PUMP', name: 'Pump.fun' },
@@ -17,6 +18,12 @@ const ASSETS = [
   { index: 11, symbol: 'KMNO', name: 'Kamino Finance' },
   { index: 12, symbol: 'MET', name: 'Meteora' },
   { index: 13, symbol: 'W', name: 'Wormhole' },
+  // EVM tokens
+  { index: 14, symbol: 'ETH', name: 'Ethereum' },
+  { index: 15, symbol: 'UNI', name: 'Uniswap' },
+  { index: 16, symbol: 'LINK', name: 'Chainlink' },
+  { index: 17, symbol: 'PEPE', name: 'Pepe' },
+  { index: 18, symbol: 'SHIB', name: 'Shiba Inu' },
 ];
 
 async function main() {

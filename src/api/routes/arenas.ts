@@ -3,6 +3,7 @@ import prisma from '../../db';
 import { ArenaStatusLabels, ArenaStatus, getAssetSymbol } from '../../types/accounts';
 import { calculateRealTimePoolValue, calculateRealTimePoolValueBatch } from '../../utils/poolCalculator';
 import { cacheService } from '../../services/cacheService';
+import lifecycleConfig from '../../services/arenaLifecycle/config';
 
 export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
   // List arenas with pagination
@@ -45,28 +46,32 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     const poolValues = await calculateRealTimePoolValueBatch(arenaIds);
 
     return {
-      data: arenas.map((arena) => ({
-        id: arena.id.toString(),
-        arenaId: arena.arenaId.toString(),
-        pda: arena.pda,
-        status: arena.status,
-        statusLabel: ArenaStatusLabels[arena.status as ArenaStatus],
-        playerCount: arena.playerCount,
-        assetCount: arena.assetCount,
-        winningAsset: arena.winningAsset,
-        winningAssetSymbol: arena.winningAsset !== null ? getAssetSymbol(arena.winningAsset) : null,
-        isSuspended: arena.isSuspended,
-        startTimestamp: arena.startTimestamp?.toISOString() || null,
-        endTimestamp: arena.endTimestamp?.toISOString() || null,
-        totalPoolUsd: poolValues.get(arena.arenaId.toString()) || 0, // Real-time calculated value
-        createdAt: arena.createdAt.toISOString(),
-        arenaAssets: arena.arenaAssets.map((asset) => ({
-          assetIndex: asset.assetIndex,
-          assetSymbol: getAssetSymbol(asset.assetIndex),
-          playerCount: asset.playerCount,
-          isWinner: asset.isWinner,
-        })),
-      })),
+      data: arenas.map((arena) => {
+        const poolValue = poolValues.get(arena.arenaId.toString()) || { totalPoolSol: 0, totalPoolUsd: 0 };
+        return {
+          id: arena.id.toString(),
+          arenaId: arena.arenaId.toString(),
+          pda: arena.pda,
+          status: arena.status,
+          statusLabel: ArenaStatusLabels[arena.status as ArenaStatus],
+          playerCount: arena.playerCount,
+          assetCount: arena.assetCount,
+          winningAsset: arena.winningAsset,
+          winningAssetSymbol: arena.winningAsset !== null ? getAssetSymbol(arena.winningAsset) : null,
+          isSuspended: arena.isSuspended,
+          startTimestamp: arena.startTimestamp?.toISOString() || null,
+          endTimestamp: arena.endTimestamp?.toISOString() || null,
+          totalPoolSol: poolValue.totalPoolSol,
+          totalPoolUsd: poolValue.totalPoolUsd,
+          createdAt: arena.createdAt.toISOString(),
+          arenaAssets: arena.arenaAssets.map((asset) => ({
+            assetIndex: asset.assetIndex,
+            assetSymbol: getAssetSymbol(asset.assetIndex),
+            playerCount: asset.playerCount,
+            isWinner: asset.isWinner,
+          })),
+        };
+      }),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -81,7 +86,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     const arenas = await prisma.arena.findMany({
       where: {
         status: {
-          in: [ArenaStatus.Waiting, ArenaStatus.Ready, ArenaStatus.Active, ArenaStatus.Starting],
+          in: [ArenaStatus.Waiting, ArenaStatus.Active],
         },
       },
       orderBy: { arenaId: 'desc' },
@@ -115,12 +120,10 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       return cached;
     }
 
-    // Find the arena that is currently accepting players (Waiting or Ready status)
+    // Find the arena that is currently accepting players (Waiting status)
     const currentArena = await prisma.arena.findFirst({
       where: {
-        status: {
-          in: [ArenaStatus.Waiting, ArenaStatus.Ready],
-        },
+        status: ArenaStatus.Waiting,
       },
       orderBy: { arenaId: 'desc' },
       include: {
@@ -160,7 +163,12 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       };
     } else {
       // Calculate real-time total pool value using latest market prices
-      const realTimePoolValue = await calculateRealTimePoolValue(currentArena.arenaId);
+      const poolValue = await calculateRealTimePoolValue(currentArena.arenaId);
+
+      // Calculate countdown info (3 minutes from arena creation)
+      const countdownStartAt = currentArena.createdAt;
+      const countdownEndsAt = new Date(countdownStartAt.getTime() + lifecycleConfig.waitingCountdownMs);
+      const countdownRemainingMs = Math.max(0, countdownEndsAt.getTime() - Date.now());
 
       // Serialize BigInt fields to strings for JSON response
       response = {
@@ -173,11 +181,17 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
           statusLabel: ArenaStatusLabels[currentArena.status as ArenaStatus],
           playerCount: currentArena.playerCount,
           assetCount: currentArena.assetCount,
-          totalPoolUsd: realTimePoolValue, // Real-time calculated value
+          totalPoolSol: poolValue.totalPoolSol,
+          totalPoolUsd: poolValue.totalPoolUsd,
           startTimestamp: currentArena.startTimestamp?.toISOString() || null,
           endTimestamp: currentArena.endTimestamp?.toISOString() || null,
           winningAsset: currentArena.winningAsset,
           maxPlayers: 10, // From program config
+          // Countdown info for waiting room
+          countdownStartAt: countdownStartAt.toISOString(),
+          countdownEndsAt: countdownEndsAt.toISOString(),
+          countdownRemainingMs,
+          countdownDurationMs: lifecycleConfig.waitingCountdownMs,
           playerEntries: currentArena.playerEntries.map((entry) => ({
             playerWallet: entry.playerWallet,
             playerIndex: entry.playerIndex,
@@ -208,12 +222,10 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/arenas/current/check-player/:wallet', async (request) => {
     const { wallet } = request.params as { wallet: string };
 
-    // Find current waiting/ready arena
+    // Find current waiting arena
     const currentArena = await prisma.arena.findFirst({
       where: {
-        status: {
-          in: [ArenaStatus.Waiting, ArenaStatus.Ready],
-        },
+        status: ArenaStatus.Waiting,
       },
       orderBy: { arenaId: 'desc' },
     });
@@ -275,7 +287,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Calculate real-time total pool value using latest market prices
-    const realTimePoolValue = await calculateRealTimePoolValue(arena.arenaId);
+    const poolValue = await calculateRealTimePoolValue(arena.arenaId);
 
     // Serialize all fields properly
     const response = {
@@ -291,7 +303,8 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       isSuspended: arena.isSuspended,
       startTimestamp: arena.startTimestamp?.toISOString() || null,
       endTimestamp: arena.endTimestamp?.toISOString() || null,
-      totalPoolUsd: realTimePoolValue, // Real-time calculated value
+      totalPoolSol: poolValue.totalPoolSol,
+      totalPoolUsd: poolValue.totalPoolUsd,
       createdAt: arena.createdAt.toISOString(),
       arenaAssets: arena.arenaAssets.map((asset) => ({
         id: asset.id.toString(),
@@ -326,13 +339,13 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
     };
 
     // Cache with appropriate TTL based on arena status
-    // Active/Starting/Ending arenas: 2 seconds (frequently changing)
-    // Ended arenas: 60 seconds (immutable)
+    // Active arenas: 2 seconds (frequently changing)
+    // Ended/Canceled arenas: 60 seconds (immutable)
     // Other statuses: 10 seconds
     let cacheTtl = 10;
-    if (arena.status === ArenaStatus.Active || arena.status === ArenaStatus.Starting || arena.status === ArenaStatus.Ending) {
+    if (arena.status === ArenaStatus.Active) {
       cacheTtl = 2;
-    } else if (arena.status === ArenaStatus.Ended) {
+    } else if (arena.status === ArenaStatus.Ended || arena.status === ArenaStatus.Canceled) {
       cacheTtl = 60;
     }
 
@@ -459,6 +472,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
               tokenAmount: true,
               usdValue: true,
               isWinner: true,
+              ownTokensClaimed: true,
               entryTimestamp: true,
             },
           },
@@ -467,11 +481,15 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       prisma.arena.count({ where: { arenaId: { in: arenaIds } } }),
     ]);
 
+    // Calculate pool values for these arenas
+    const poolValues = await calculateRealTimePoolValueBatch(arenaIds);
+
     return {
       data: arenas.map((arena) => {
         // Find the player's entry in this arena
         const userEntries = arena.playerEntries.filter((e) => walletList.includes(e.playerWallet));
         const userEntry = userEntries[0]; // Primary entry (could have multiple wallets)
+        const poolValue = poolValues.get(arena.arenaId.toString()) || { totalPoolSol: 0, totalPoolUsd: 0 };
 
         return {
           id: arena.id.toString(),
@@ -486,7 +504,8 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
           isSuspended: arena.isSuspended,
           startTimestamp: arena.startTimestamp?.toISOString() || null,
           endTimestamp: arena.endTimestamp?.toISOString() || null,
-          totalPoolUsd: arena.totalPoolUsd ? Number(arena.totalPoolUsd) : 0,
+          totalPoolSol: poolValue.totalPoolSol,
+          totalPoolUsd: poolValue.totalPoolUsd,
           createdAt: arena.createdAt.toISOString(),
           // User's participation info
           userEntry: userEntry ? {
@@ -494,9 +513,8 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
             playerIndex: userEntry.playerIndex,
             assetIndex: userEntry.assetIndex,
             assetSymbol: getAssetSymbol(userEntry.assetIndex),
-            tokenAmount: userEntry.tokenAmount ? Number(userEntry.tokenAmount) : 0,
-            usdValue: userEntry.usdValue ? Number(userEntry.usdValue) : 0,
             isWinner: userEntry.isWinner,
+            hasClaimed: userEntry.ownTokensClaimed, // For new SOL program
             entryTimestamp: userEntry.entryTimestamp?.toISOString() || null,
           } : null,
           arenaAssets: arena.arenaAssets.map((asset) => ({

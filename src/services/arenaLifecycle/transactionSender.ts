@@ -1,5 +1,5 @@
 /**
- * Transaction Sender - Handles Solana transactions for arena lifecycle
+ * Transaction Sender - Handles Solana transactions for arena lifecycle (cryptarena-sol)
  */
 
 import {
@@ -14,15 +14,17 @@ import {
 import bs58 from 'bs58';
 import config from '../../config';
 import logger from '../../utils/logger';
+import prisma from '../../db';
 
 // Program constants
 const PROGRAM_ID = new PublicKey(config.programId);
 
-// Instruction discriminators - sha256("global:instruction_name")[0..8]
+// Instruction discriminators from cryptarena_sol IDL
 const DISCRIMINATORS = {
   setStartPrice: Buffer.from([172, 199, 165, 159, 199, 210, 161, 245]),
   setEndPrice: Buffer.from([53, 149, 82, 113, 237, 242, 171, 28]),
-  finalizeArena: Buffer.from([66, 155, 212, 24, 174, 62, 93, 81]),
+  startArena: Buffer.from([76, 99, 3, 235, 111, 167, 248, 5]),
+  endArena: Buffer.from([194, 154, 62, 175, 137, 204, 45, 164]),
 };
 
 export class TransactionSender {
@@ -55,11 +57,11 @@ export class TransactionSender {
   }
   
   /**
-   * Derive PDAs for arena operations
+   * Derive PDAs for arena operations (cryptarena-sol)
    */
   getGlobalStatePda(): PublicKey {
     const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('global_state_v2')],
+      [Buffer.from('global_state')],
       PROGRAM_ID
     );
     return pda;
@@ -69,27 +71,29 @@ export class TransactionSender {
     const buffer = Buffer.alloc(8);
     buffer.writeBigUInt64LE(arenaId);
     const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('arena_v2'), buffer],
+      [Buffer.from('arena'), buffer],
       PROGRAM_ID
     );
     return pda;
   }
   
-  getArenaAssetPda(arenaPda: PublicKey, assetIndex: number): PublicKey {
+  getPlayerEntryPda(arenaPda: PublicKey, playerPubkey: PublicKey): PublicKey {
     const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('arena_asset_v2'), arenaPda.toBuffer(), Buffer.from([assetIndex])],
+      [Buffer.from('player_entry'), arenaPda.toBuffer(), playerPubkey.toBuffer()],
       PROGRAM_ID
     );
     return pda;
   }
   
   /**
-   * Set start price for an asset
+   * Set start price for a player's token (cryptarena-sol)
+   * In cryptarena-sol, prices are stored on PlayerEntry accounts
    */
-  async setStartPrice(arenaId: bigint, assetIndex: number, price: bigint): Promise<string> {
+  async setStartPrice(arenaId: bigint, playerWallet: string, price: bigint): Promise<string> {
     const globalStatePda = this.getGlobalStatePda();
     const arenaPda = this.getArenaPda(arenaId);
-    const arenaAssetPda = this.getArenaAssetPda(arenaPda, assetIndex);
+    const playerPubkey = new PublicKey(playerWallet);
+    const playerEntryPda = this.getPlayerEntryPda(arenaPda, playerPubkey);
     
     // Build instruction data: discriminator + price (u64)
     const priceBuffer = Buffer.alloc(8);
@@ -100,23 +104,24 @@ export class TransactionSender {
       programId: PROGRAM_ID,
       keys: [
         { pubkey: globalStatePda, isSigner: false, isWritable: false },
-        { pubkey: arenaPda, isSigner: false, isWritable: true },
-        { pubkey: arenaAssetPda, isSigner: false, isWritable: true },
+        { pubkey: arenaPda, isSigner: false, isWritable: false },
+        { pubkey: playerEntryPda, isSigner: false, isWritable: true },
         { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: false },
       ],
       data,
     });
     
-    return this.sendTransaction([instruction], `setStartPrice(arena=${arenaId}, asset=${assetIndex})`);
+    return this.sendTransaction([instruction], `setStartPrice(arena=${arenaId}, player=${playerWallet.slice(0, 8)})`);
   }
   
   /**
-   * Set end price for an asset
+   * Set end price for a player's token (cryptarena-sol)
    */
-  async setEndPrice(arenaId: bigint, assetIndex: number, price: bigint): Promise<string> {
+  async setEndPrice(arenaId: bigint, playerWallet: string, price: bigint): Promise<string> {
     const globalStatePda = this.getGlobalStatePda();
     const arenaPda = this.getArenaPda(arenaId);
-    const arenaAssetPda = this.getArenaAssetPda(arenaPda, assetIndex);
+    const playerPubkey = new PublicKey(playerWallet);
+    const playerEntryPda = this.getPlayerEntryPda(arenaPda, playerPubkey);
     
     // Build instruction data: discriminator + price (u64)
     const priceBuffer = Buffer.alloc(8);
@@ -127,26 +132,47 @@ export class TransactionSender {
       programId: PROGRAM_ID,
       keys: [
         { pubkey: globalStatePda, isSigner: false, isWritable: false },
-        { pubkey: arenaPda, isSigner: false, isWritable: true },
-        { pubkey: arenaAssetPda, isSigner: false, isWritable: true },
+        { pubkey: arenaPda, isSigner: false, isWritable: false },
+        { pubkey: playerEntryPda, isSigner: false, isWritable: true },
         { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: false },
       ],
       data,
     });
     
-    return this.sendTransaction([instruction], `setEndPrice(arena=${arenaId}, asset=${assetIndex})`);
+    return this.sendTransaction([instruction], `setEndPrice(arena=${arenaId}, player=${playerWallet.slice(0, 8)})`);
   }
   
   /**
-   * Finalize arena and determine winner
+   * Start arena (cryptarena-sol) - admin only
    */
-  async finalizeArena(arenaId: bigint, assetIndices: number[]): Promise<string> {
+  async startArena(arenaId: bigint): Promise<string> {
     const globalStatePda = this.getGlobalStatePda();
     const arenaPda = this.getArenaPda(arenaId);
     
-    // Get all arena asset PDAs as remaining accounts
-    const remainingAccounts = assetIndices.map(assetIndex => ({
-      pubkey: this.getArenaAssetPda(arenaPda, assetIndex),
+    const instruction = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: globalStatePda, isSigner: false, isWritable: true },
+        { pubkey: arenaPda, isSigner: false, isWritable: true },
+        { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: false },
+      ],
+      data: DISCRIMINATORS.startArena,
+    });
+    
+    return this.sendTransaction([instruction], `startArena(arena=${arenaId})`);
+  }
+  
+  /**
+   * End arena and determine winner (cryptarena-sol)
+   * Requires all PlayerEntry PDAs as remaining accounts
+   */
+  async endArena(arenaId: bigint, playerWallets: string[]): Promise<string> {
+    const globalStatePda = this.getGlobalStatePda();
+    const arenaPda = this.getArenaPda(arenaId);
+    
+    // Get all player entry PDAs as remaining accounts
+    const remainingAccounts = playerWallets.map(wallet => ({
+      pubkey: this.getPlayerEntryPda(arenaPda, new PublicKey(wallet)),
       isSigner: false,
       isWritable: false,
     }));
@@ -159,10 +185,10 @@ export class TransactionSender {
         { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: false },
         ...remainingAccounts,
       ],
-      data: DISCRIMINATORS.finalizeArena,
+      data: DISCRIMINATORS.endArena,
     });
     
-    return this.sendTransaction([instruction], `finalizeArena(arena=${arenaId})`);
+    return this.sendTransaction([instruction], `endArena(arena=${arenaId})`);
   }
   
   /**
@@ -199,13 +225,14 @@ export class TransactionSender {
   }
   
   /**
-   * Get arena info from chain
+   * Get arena info from chain (cryptarena-sol)
    */
   async getArenaInfo(arenaId: bigint): Promise<{
     status: number;
-    assetCount: number;
+    playerCount: number;
     endTimestamp: bigint;
     winningAsset: number;
+    isCanceled: boolean;
   } | null> {
     try {
       const arenaPda = this.getArenaPda(arenaId);
@@ -215,15 +242,30 @@ export class TransactionSender {
       
       const data = accountInfo.data;
       // Parse arena data (skip 8 byte discriminator)
-      // id: u64, status: u8, player_count: u8, asset_count: u8, prices_set: u8,
-      // end_prices_set: u8, winning_asset: u8, is_suspended: bool, bump: u8,
-      // start_timestamp: i64, end_timestamp: i64, total_pool: u64
+      // id: u64, status: u8, player_count: u8, winning_asset: u8, is_canceled: bool,
+      // treasury_claimed: bool, bump: u8, start_timestamp: i64, end_timestamp: i64, total_pool: u64
+      
+      let offset = 8; // skip discriminator
+      offset += 8; // skip id
+      const status = data[offset];
+      offset += 1;
+      const playerCount = data[offset];
+      offset += 1;
+      const winningAsset = data[offset];
+      offset += 1;
+      const isCanceled = data[offset] === 1;
+      offset += 1;
+      offset += 1; // treasury_claimed
+      offset += 1; // bump
+      offset += 8; // start_timestamp
+      const endTimestamp = data.readBigInt64LE(offset);
       
       return {
-        status: data[16],
-        assetCount: data[18],
-        endTimestamp: data.readBigInt64LE(24 + 8), // offset to end_timestamp
-        winningAsset: data[21],
+        status,
+        playerCount,
+        endTimestamp,
+        winningAsset,
+        isCanceled,
       };
     } catch (error) {
       logger.error({ arenaId: arenaId.toString(), error }, 'Failed to get arena info');
@@ -232,30 +274,15 @@ export class TransactionSender {
   }
   
   /**
-   * Get assets in an arena
+   * Get player wallets in an arena from database
    */
-  async getArenaAssets(arenaId: bigint): Promise<number[]> {
-    const assets: number[] = [];
-    const arenaPda = this.getArenaPda(arenaId);
+  async getArenaPlayers(arenaId: bigint): Promise<string[]> {
+    const entries = await prisma.playerEntry.findMany({
+      where: { arenaId },
+      select: { playerWallet: true },
+    });
     
-    for (let i = 0; i < 14; i++) {
-      try {
-        const assetPda = this.getArenaAssetPda(arenaPda, i);
-        const accountInfo = await this.connection.getAccountInfo(assetPda);
-        
-        if (accountInfo && accountInfo.data.length > 0) {
-          // Check player count (offset 33 after discriminator + arena pubkey)
-          const playerCount = accountInfo.data[8 + 32 + 1];
-          if (playerCount > 0) {
-            assets.push(i);
-          }
-        }
-      } catch {
-        // Asset doesn't exist, continue
-      }
-    }
-    
-    return assets;
+    return entries.map(e => e.playerWallet);
   }
 }
 

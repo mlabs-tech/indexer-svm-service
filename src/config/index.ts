@@ -13,8 +13,8 @@ export const config = {
   solanaRpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
   solanaWsUrl: process.env.SOLANA_WS_URL || 'wss://api.devnet.solana.com',
 
-  // Program
-  programId: process.env.PROGRAM_ID || '2LsREShXRB5GMera37czrEKwe5xt9FUnKAjwpW183ce9',
+  // Program (cryptarena-sol - SOL entry fee based)
+  programId: process.env.PROGRAM_ID || 'GX4gVWUtVgq6XxL8oHYy6psoN9KFdJhwnds2T3NHe5na',
 
   // Server
   port: parseInt(process.env.PORT || '3001', 10),

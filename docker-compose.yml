@@ -9,10 +9,10 @@ services:
       - REDIS_URL=redis://redis:6379
       - SOLANA_RPC_URL=https://devnet.helius-rpc.com/?api-key=aef82c1e-d2b4-4c37-90c9-7bb84228d5cf
       - SOLANA_WS_URL=wss://devnet.helius-rpc.com/?api-key=aef82c1e-d2b4-4c37-90c9-7bb84228d5cf
-      - PROGRAM_ID=2LsREShXRB5GMera37czrEKwe5xt9FUnKAjwpW183ce9
+      - PROGRAM_ID=GX4gVWUtVgq6XxL8oHYy6psoN9KFdJhwnds2T3NHe5na
       - PORT=3001
       - LOG_LEVEL=info
-      - CMC_API_KEY=5f98fdb0-3b70-4456-897a-d99a61fca066
+      - PYTH_HERMES_URL=https://hermes.pyth.network
       - BACKEND_API_URL=http://host.docker.internal:8080
       - BACKEND_API_KEY=cryptarena-indexer-secret-key-2024
       - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY:-}

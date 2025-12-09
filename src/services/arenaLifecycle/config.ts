@@ -10,7 +10,10 @@ export const lifecycleConfig = {
   // Timing
   priceSetDelayMs: 500,       // Delay between setting prices for each asset
   endCheckIntervalMs: 5000,   // How often to check for arenas needing to end
-  startCheckIntervalMs: 2000, // How often to check for arenas needing to start
+  startCheckIntervalMs: 10000, // How often to check for arenas needing to start (10 seconds)
+  
+  // Waiting room countdown (3 minutes from first player join)
+  waitingCountdownMs: 3 * 60 * 1000,  // 3 minutes in milliseconds
   
   // Job queue names
   queues: {

@@ -1,5 +1,5 @@
 /**
- * End Worker - Handles ending arenas when their duration is complete
+ * End Worker - Handles ending arenas when their duration is complete (cryptarena-sol)
  */
 
 import { Worker, Job, Queue } from 'bullmq';
@@ -10,7 +10,7 @@ import config from '../../config';
 import lifecycleConfig from './config';
 import TransactionSender from './transactionSender';
 import { fetchPricesFromCMC } from '../priceFetcher';
-import { ASSETS } from '../../types/accounts';
+import { ASSETS, ArenaStatus } from '../../types/accounts';
 
 export interface EndArenaJobData {
   arenaId: string; // Stored as string because BigInt can't be serialized to JSON
@@ -108,33 +108,35 @@ export class EndWorker {
     });
     
     for (const arena of arenasToEnd) {
-      // Also check from database arenas table
       const arenaData = await db.arena.findUnique({
         where: { arenaId: arena.arenaId },
-        include: { arenaAssets: true },
       });
       
       if (!arenaData) continue;
       
-      // Only process Active arenas (status = 3)
-      if (arenaData.status !== 3) {
+      // Only process Active arenas (status = 2 in cryptarena-sol)
+      if (arenaData.status !== ArenaStatus.Active) {
         logger.warn({ arenaId: arena.arenaId.toString(), status: arenaData.status }, 'Arena not in Active status, skipping end');
         continue;
       }
       
-      const assetIndices = arenaData.arenaAssets.map(a => a.assetIndex);
+      // Get player entries for asset indices
+      const playerEntries = await db.playerEntry.findMany({
+        where: { arenaId: arena.arenaId },
+      });
+      const assetIndices = playerEntries.map(e => e.assetIndex);
+      
       await this.addJob(arena.arenaId, assetIndices);
     }
     
     // Also check for Active arenas in the database that might have been missed
     const activeArenas = await db.arena.findMany({
       where: {
-        status: 3, // Active
+        status: ArenaStatus.Active,
         endTimestamp: {
           lte: now,
         },
       },
-      include: { arenaAssets: true },
     });
     
     for (const arena of activeArenas) {
@@ -147,7 +149,12 @@ export class EndWorker {
         continue;
       }
       
-      const assetIndices = arena.arenaAssets.map(a => a.assetIndex);
+      // Get player entries for asset indices
+      const playerEntries = await db.playerEntry.findMany({
+        where: { arenaId: arena.arenaId },
+      });
+      const assetIndices = playerEntries.map(e => e.assetIndex);
+      
       await this.addJob(arena.arenaId, assetIndices);
     }
   }
@@ -182,7 +189,7 @@ export class EndWorker {
     const job = await this.queue.add(
       `end-arena-${arenaId}`,
       {
-        arenaId: arenaId.toString(), // Convert BigInt to string for JSON serialization
+        arenaId: arenaId.toString(),
         assetIndices,
       },
       {
@@ -202,42 +209,61 @@ export class EndWorker {
   }
   
   /**
-   * Process end arena job
+   * Process end arena job - set end prices and call endArena
    */
   private async processJob(job: Job<EndArenaJobData>): Promise<void> {
-    const { arenaId: arenaIdStr, assetIndices } = job.data;
+    const { arenaId: arenaIdStr } = job.data;
     const arenaIdBigInt = BigInt(arenaIdStr);
     
-    logger.info({ arenaId: arenaIdStr, attempt: job.attemptsMade + 1, assets: assetIndices }, 'Processing end arena job');
+    logger.info({ arenaId: arenaIdStr, attempt: job.attemptsMade + 1 }, 'Processing end arena job');
     
     try {
+      // Get player entries from database
+      const playerEntries = await db.playerEntry.findMany({
+        where: { arenaId: arenaIdBigInt },
+      });
+      
+      if (playerEntries.length === 0) {
+        throw new Error('No player entries found for arena');
+      }
+      
+      // Get unique symbols from player entries
+      const symbols = [...new Set(
+        playerEntries.map(e => ASSETS.find(a => a.index === e.assetIndex)?.symbol).filter(Boolean)
+      )] as string[];
+      
       // Fetch current prices from CoinMarketCap
-      const symbols = assetIndices.map(i => ASSETS[i]?.symbol).filter(Boolean) as string[];
       const prices = await fetchPricesFromCMC(symbols);
       
       if (Object.keys(prices).length === 0) {
         throw new Error('Failed to fetch prices from CoinMarketCap');
       }
       
-      // Set end price for each asset
-      for (const assetIndex of assetIndices) {
-        const symbol = ASSETS[assetIndex]?.symbol;
-        if (!symbol) continue;
+      // Set end price for each player
+      for (const entry of playerEntries) {
+        const asset = ASSETS.find(a => a.index === entry.assetIndex);
+        if (!asset) continue;
         
-        const price = prices[symbol];
+        const price = prices[asset.symbol];
         if (!price) {
-          logger.warn({ symbol, assetIndex }, 'No price found for asset');
+          logger.warn({ symbol: asset.symbol, assetIndex: entry.assetIndex }, 'No price found for asset');
           continue;
         }
         
         // Convert price to on-chain format (8 decimals)
         const onchainPrice = BigInt(Math.floor(price * 1e8));
         
-        logger.info({ arenaId: arenaIdStr, symbol, price, onchainPrice: onchainPrice.toString() }, 'Setting end price');
+        logger.info({ 
+          arenaId: arenaIdStr, 
+          player: entry.playerWallet.slice(0, 8), 
+          symbol: asset.symbol, 
+          price, 
+          onchainPrice: onchainPrice.toString() 
+        }, 'Setting end price');
         
         await this.transactionSender.setEndPrice(
           arenaIdBigInt,
-          assetIndex,
+          entry.playerWallet,
           onchainPrice
         );
         
@@ -245,11 +271,14 @@ export class EndWorker {
         await this.sleep(lifecycleConfig.priceSetDelayMs);
       }
       
-      // Finalize arena to determine winner
-      logger.info({ arenaId: arenaIdStr }, 'Finalizing arena');
-      await this.transactionSender.finalizeArena(
+      // Get player wallets for endArena call
+      const playerWallets = playerEntries.map(e => e.playerWallet);
+      
+      // End arena and determine winner
+      logger.info({ arenaId: arenaIdStr }, 'Ending arena');
+      await this.transactionSender.endArena(
         arenaIdBigInt,
-        assetIndices
+        playerWallets
       );
       
       // Update processing state
@@ -265,7 +294,6 @@ export class EndWorker {
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // Update processing state with error
       await db.arenaProcessingState.update({
         where: { arenaId: arenaIdBigInt },
         data: {
@@ -275,7 +303,7 @@ export class EndWorker {
         },
       });
       
-      throw error; // Re-throw to trigger retry
+      throw error;
     }
   }
   

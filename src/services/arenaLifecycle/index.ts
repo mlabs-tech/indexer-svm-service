@@ -2,8 +2,8 @@
  * Arena Lifecycle Manager
  * 
  * Handles automatic starting and ending of arenas:
- * - When 10th player enters: automatically start arena (set start prices)
- * - When arena duration ends: automatically end arena (set end prices, finalize)
+ * - After 3 minutes from first player join: automatically start arena
+ * - When arena duration ends (10 min): automatically end arena (set end prices, finalize)
  */
 
 import db from '../../db';
@@ -11,11 +11,13 @@ import logger from '../../utils/logger';
 import { StartWorker } from './startWorker';
 import { EndWorker } from './endWorker';
 import lifecycleConfig from './config';
+import { ArenaStatus } from '../../types/accounts';
 
 export class ArenaLifecycleManager {
   private startWorker: StartWorker;
   private endWorker: EndWorker;
   private isRunning: boolean = false;
+  private countdownCheckInterval: NodeJS.Timeout | null = null;
   
   constructor() {
     this.startWorker = new StartWorker();
@@ -37,16 +39,72 @@ export class ArenaLifecycleManager {
     await this.startWorker.start();
     await this.endWorker.start();
     
+    // Start countdown checker (checks every 10 seconds for arenas past 3 min countdown)
+    this.countdownCheckInterval = setInterval(
+      () => this.checkWaitingArenasCountdown(),
+      lifecycleConfig.startCheckIntervalMs
+    );
+    
     this.isRunning = true;
     
-    logger.info({ startQueue: lifecycleConfig.queues.startArena, endQueue: lifecycleConfig.queues.endArena }, 'Arena Lifecycle Manager started');
+    logger.info({ 
+      startQueue: lifecycleConfig.queues.startArena, 
+      endQueue: lifecycleConfig.queues.endArena,
+      countdownMs: lifecycleConfig.waitingCountdownMs,
+    }, 'Arena Lifecycle Manager started');
   }
   
   /**
-   * Called when an arena becomes Ready (10 players)
+   * Check for waiting arenas that have passed the 3-minute countdown
+   */
+  private async checkWaitingArenasCountdown(): Promise<void> {
+    try {
+      const countdownThreshold = new Date(Date.now() - lifecycleConfig.waitingCountdownMs);
+      
+      // Find waiting arenas that were created more than 3 minutes ago
+      const waitingArenas = await db.arena.findMany({
+        where: {
+          status: ArenaStatus.Waiting,
+          playerCount: { gte: 1 }, // At least 1 player
+          createdAt: { lte: countdownThreshold },
+        },
+        include: {
+          playerEntries: {
+            select: { playerWallet: true, assetIndex: true },
+          },
+        },
+      });
+      
+      for (const arena of waitingArenas) {
+        // Check if already being processed
+        const state = await db.arenaProcessingState.findUnique({
+          where: { arenaId: arena.arenaId },
+        });
+        
+        if (state && state.startStatus !== 'pending' && state.startStatus !== 'failed') {
+          continue; // Already processing
+        }
+        
+        logger.info({ 
+          arenaId: arena.arenaId.toString(), 
+          playerCount: arena.playerCount,
+          createdAt: arena.createdAt.toISOString(),
+        }, '3-minute countdown reached, starting arena');
+        
+        const assetIndices = arena.playerEntries.map(e => e.assetIndex);
+        await this.startWorker.addJob(arena.arenaId, assetIndices);
+      }
+    } catch (error) {
+      logger.error({ error }, 'Error checking waiting arenas countdown');
+    }
+  }
+  
+  /**
+   * Called when an arena becomes Ready (10 players) - NOW: immediately start
+   * Note: We keep this for immediate start when full, but main trigger is 3-min countdown
    */
   async onArenaReady(arenaId: bigint, assetIndices: number[]): Promise<void> {
-    logger.info({ arenaId: arenaId.toString(), assets: assetIndices }, 'Arena ready, triggering start');
+    logger.info({ arenaId: arenaId.toString(), assets: assetIndices }, 'Arena ready (admin triggered), setting prices');
     
     await this.startWorker.addJob(arenaId, assetIndices);
   }
@@ -121,6 +179,12 @@ export class ArenaLifecycleManager {
    */
   async stop(): Promise<void> {
     logger.info('Stopping Arena Lifecycle Manager...');
+    
+    // Stop countdown checker
+    if (this.countdownCheckInterval) {
+      clearInterval(this.countdownCheckInterval);
+      this.countdownCheckInterval = null;
+    }
     
     await this.startWorker.stop();
     await this.endWorker.stop();

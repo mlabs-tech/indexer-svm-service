@@ -1,101 +1,86 @@
 import { PublicKey } from '@solana/web3.js';
 
 /**
- * Arena Status enum matching on-chain values
+ * Arena Status enum matching on-chain values (cryptarena-sol)
  */
 export enum ArenaStatus {
   Uninitialized = 0,
   Waiting = 1,
-  Ready = 2,
-  Active = 3,
-  Ended = 4,
-  Suspended = 5,
-  Starting = 6,
-  Ending = 7,
+  Active = 2,
+  Ended = 3,
+  Canceled = 4,
 }
 
 export const ArenaStatusLabels: Record<ArenaStatus, string> = {
   [ArenaStatus.Uninitialized]: 'Uninitialized',
   [ArenaStatus.Waiting]: 'Waiting',
-  [ArenaStatus.Ready]: 'Ready',
   [ArenaStatus.Active]: 'Active',
   [ArenaStatus.Ended]: 'Ended',
-  [ArenaStatus.Suspended]: 'Suspended',
-  [ArenaStatus.Starting]: 'Starting',
-  [ArenaStatus.Ending]: 'Ending',
+  [ArenaStatus.Canceled]: 'Canceled',
 };
 
 /**
- * GlobalState account structure
+ * GlobalState account structure (cryptarena-sol)
  */
 export interface GlobalStateAccount {
   admin: PublicKey;
   treasuryWallet: PublicKey;
   arenaDuration: bigint;
+  entryFee: bigint;
   currentArenaId: bigint;
-  maxPlayersPerArena: number;
-  maxSameAsset: number;
   isPaused: boolean;
   bump: number;
 }
 
 /**
- * Arena account structure
+ * Arena account structure (cryptarena-sol)
  */
 export interface ArenaAccount {
   id: bigint;
   status: ArenaStatus;
   playerCount: number;
-  assetCount: number;
-  pricesSet: number;
-  endPricesSet: number;
   winningAsset: number;
-  isSuspended: boolean;
+  isCanceled: boolean;
+  treasuryClaimed: boolean;
   bump: number;
   startTimestamp: bigint;
   endTimestamp: bigint;
   totalPool: bigint;
+  tokenSlots: number[];
+  playerAddresses: PublicKey[];
 }
 
 /**
- * ArenaAsset account structure
- */
-export interface ArenaAssetAccount {
-  arena: PublicKey;
-  assetIndex: number;
-  playerCount: number;
-  startPrice: bigint;
-  endPrice: bigint;
-  priceMovement: bigint;
-  bump: number;
-}
-
-/**
- * PlayerEntry account structure
+ * PlayerEntry account structure (cryptarena-sol)
+ * Now stores entry_fee (SOL) instead of token amount
+ * Prices are stored directly on PlayerEntry instead of ArenaAsset
  */
 export interface PlayerEntryAccount {
   arena: PublicKey;
   player: PublicKey;
   assetIndex: number;
   playerIndex: number;
-  amount: bigint;
-  usdValue: bigint;
+  entryFee: bigint;        // SOL entry fee in lamports
   entryTimestamp: bigint;
+  startPrice: bigint;      // Price at arena start (8 decimals)
+  endPrice: bigint;        // Price at arena end (8 decimals)
+  priceMovement: bigint;   // Price movement in basis points
   isWinner: boolean;
-  ownTokensClaimed: boolean;
-  treasuryFeeClaimed: boolean;
-  rewardsClaimedBitmap: bigint;
+  hasClaimed: boolean;
   bump: number;
 }
 
 /**
- * WhitelistedToken account structure
+ * WhitelistedToken account structure (cryptarena-sol)
+ * Supports both Solana and EVM token addresses
  */
 export interface WhitelistedTokenAccount {
-  mint: PublicKey;
   assetIndex: number;
+  chainType: number;       // 0 = Solana, 1 = EVM
   isActive: boolean;
   bump: number;
+  tokenAddress: Uint8Array; // 32 bytes
+  symbol: string;          // Up to 10 chars
 }
 
 /**
@@ -116,9 +101,13 @@ export const ASSETS = [
   { index: 11, symbol: 'KMNO', name: 'Kamino Finance' },
   { index: 12, symbol: 'MET', name: 'Meteora' },
   { index: 13, symbol: 'W', name: 'Wormhole' },
+  { index: 14, symbol: 'ETH', name: 'Ethereum' },
+  { index: 15, symbol: 'UNI', name: 'Uniswap' },
+  { index: 16, symbol: 'LINK', name: 'Chainlink' },
+  { index: 17, symbol: 'PEPE', name: 'Pepe' },
+  { index: 18, symbol: 'SHIB', name: 'Shiba Inu' },
 ] as const;
 
 export function getAssetSymbol(index: number): string {
-  return ASSETS[index]?.symbol || `UNKNOWN_${index}`;
+  return ASSETS.find(a => a.index === index)?.symbol || `UNKNOWN_${index}`;
 }
-

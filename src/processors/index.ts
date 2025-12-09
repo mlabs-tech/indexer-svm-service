@@ -3,6 +3,7 @@ import { processGlobalState } from './globalState';
 import { processArena } from './arena';
 import { processArenaAsset } from './arenaAsset';
 import { processPlayerEntry } from './playerEntry';
+import { SKIP_ACCOUNT_TYPES } from '../parsers/accounts';
 import logger from '../utils/logger';
 
 /**
@@ -14,6 +15,12 @@ export async function processAccountUpdate(
   accountType: string,
   slot: number
 ): Promise<void> {
+  // Skip certain account types that don't need processing
+  if (SKIP_ACCOUNT_TYPES.includes(accountType)) {
+    logger.debug({ accountType, pubkey: pubkey.toString() }, 'Skipping account type');
+    return;
+  }
+
   try {
     switch (accountType) {
       case 'GlobalState':
@@ -27,6 +34,10 @@ export async function processAccountUpdate(
         break;
       case 'PlayerEntry':
         await processPlayerEntry(pubkey, data);
+        break;
+      case 'WhitelistedToken':
+        // Whitelisted tokens are not stored in DB, just used for validation
+        logger.debug({ pubkey: pubkey.toString() }, 'WhitelistedToken account detected');
         break;
       default:
         logger.warn({ accountType }, 'Unknown account type');

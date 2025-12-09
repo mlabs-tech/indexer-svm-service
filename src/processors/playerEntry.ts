@@ -2,11 +2,11 @@ import { PublicKey } from '@solana/web3.js';
 import { parsePlayerEntry } from '../parsers/accounts';
 import prisma from '../db';
 import logger from '../utils/logger';
-import { getPriceAtTime } from '../services/priceFetcher';
 import { cacheService } from '../services/cacheService';
 
 /**
- * Process PlayerEntry account update
+ * Process PlayerEntry account update (cryptarena-sol)
+ * Players now enter with SOL entry fee instead of tokens
  */
 export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promise<void> {
   const entry = parsePlayerEntry(data);
@@ -25,67 +25,38 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     return;
   }
 
-  // Convert amounts
-  const tokenAmount = Number(entry.amount) / 1e9;
-  const usdValue = Number(entry.usdValue) / 1e6;  // User's submitted value
+  // Convert entry fee from lamports to SOL
+  const entryFeeSol = Number(entry.entryFee) / 1e9;
   const entryTimestamp = new Date(Number(entry.entryTimestamp) * 1000);
 
-  // Fetch actual market price at entry time
-  let entryPrice: number | null = null;
-  let actualUsdValue: number | null = null;
-  
-  try {
-    entryPrice = await getPriceAtTime(entry.assetIndex, entryTimestamp);
-    if (entryPrice !== null) {
-      actualUsdValue = tokenAmount * entryPrice;
-      const slippage = actualUsdValue - usdValue;
-      const slippagePercent = (slippage / usdValue) * 100;
-      
-      logger.info(
-        {
-          assetIndex: entry.assetIndex,
-          submittedUsd: usdValue,
-          actualUsd: actualUsdValue,
-          slippage,
-          slippagePercent: slippagePercent.toFixed(2) + '%',
-          entryPrice,
-        },
-        'Price slippage detected at entry'
-      );
-    }
-  } catch (error) {
-    logger.warn({ error, assetIndex: entry.assetIndex }, 'Failed to fetch price at entry time');
-  }
-
-  // Count claimed rewards from bitmap
-  let rewardsClaimedCount = 0;
-  let bitmap = entry.rewardsClaimedBitmap;
-  while (bitmap > 0n) {
-    rewardsClaimedCount += Number(bitmap & 1n);
-    bitmap >>= 1n;
-  }
+  // Convert prices (8 decimals)
+  const startPrice = entry.startPrice > 0n ? Number(entry.startPrice) / 1e8 : null;
+  const endPrice = entry.endPrice > 0n ? Number(entry.endPrice) / 1e8 : null;
+  const priceMovementBps = Number(entry.priceMovement);
 
   const existingEntry = await prisma.playerEntry.findUnique({
     where: { pda },
   });
 
+  // For backward compatibility with frontend:
+  // - tokenAmount stores the SOL entry fee
+  // - usdValue stores the entry fee (can be updated to actual USD value later)
   const entryData = {
     playerWallet: entry.player.toString(),
     playerIndex: entry.playerIndex,
     assetIndex: entry.assetIndex,
-    tokenAmount,
-    usdValue,  // User's submitted value
-    entryPrice,  // Actual market price at entry
-    actualUsdValue,  // Actual market value (token_amount * entry_price)
+    tokenAmount: entryFeeSol,          // SOL entry fee
+    usdValue: entryFeeSol,             // Entry fee (SOL amount for now)
+    entryPrice: startPrice,            // Start price when available
+    actualUsdValue: startPrice ? entryFeeSol * startPrice : null,
     entryTimestamp,
     isWinner: entry.isWinner,
-    ownTokensClaimed: entry.ownTokensClaimed,
-    rewardsClaimedCount,
-    rewardsClaimedBitmap: entry.rewardsClaimedBitmap.toString(), // Store as string
+    ownTokensClaimed: entry.hasClaimed, // Using hasClaimed for compatibility
+    rewardsClaimedCount: entry.hasClaimed ? 1 : 0,
+    rewardsClaimedBitmap: entry.hasClaimed ? '1' : '0',
   };
 
   if (existingEntry) {
-    // Check if winner status changed (arena finalized)
     const wasWinner = existingEntry.isWinner;
     const isNowWinner = entry.isWinner;
 
@@ -97,73 +68,25 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     // Invalidate cache for this arena
     await cacheService.invalidateArena(arena.arenaId.toString());
 
-    // Update player stats if winner status changed and arena is finalized
+    // Update ArenaAsset with price data from PlayerEntry
+    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementBps, entry.isWinner);
+
+    // Update player stats if winner status changed
     if (!wasWinner && isNowWinner) {
-      // Player became a winner
-      await prisma.playerStats.update({
+      await prisma.playerStats.upsert({
         where: { playerWallet: entry.player.toString() },
-        data: {
+        update: {
           totalWins: { increment: 1 },
-          winRate: {
-            set: await calculateWinRate(entry.player.toString(), true),
-          },
+        },
+        create: {
+          playerWallet: entry.player.toString(),
+          totalWins: 1,
         },
       });
       logger.info(
         { player: entry.player.toString().slice(0, 8), arenaId: arena.arenaId.toString() },
         'Player won arena - stats updated'
       );
-    } else if (wasWinner === false && isNowWinner === false && existingEntry.ownTokensClaimed === false && entry.ownTokensClaimed === false) {
-      // Check if arena is now finalized and this player lost
-      // We detect this by checking if the arena's winning_asset is set and different from player's asset
-      const updatedArena = await prisma.arena.findUnique({
-        where: { arenaId: arena.arenaId },
-      });
-      
-      if (updatedArena && updatedArena.winningAsset !== null && updatedArena.winningAsset !== entry.assetIndex) {
-        // Check if we already counted this loss
-        const playerStats = await prisma.playerStats.findUnique({
-          where: { playerWallet: entry.player.toString() },
-        });
-        
-        // Only count loss once per arena - use arena events to track
-        const lossEvent = await prisma.playerAction.findFirst({
-          where: {
-            arenaId: arena.arenaId,
-            playerWallet: entry.player.toString(),
-            actionType: 'arena_loss',
-          },
-        });
-        
-        if (!lossEvent) {
-          await prisma.playerStats.update({
-            where: { playerWallet: entry.player.toString() },
-            data: {
-              totalLosses: { increment: 1 },
-              totalUsdLost: { increment: existingEntry.usdValue },
-              winRate: {
-                set: await calculateWinRate(entry.player.toString(), false),
-              },
-            },
-          });
-          
-          // Record the loss event to prevent double counting
-          await prisma.playerAction.create({
-            data: {
-              arenaId: arena.arenaId,
-              playerWallet: entry.player.toString(),
-              actionType: 'arena_loss',
-              assetIndex: entry.assetIndex,
-              usdValue: existingEntry.usdValue,
-            },
-          });
-          
-          logger.info(
-            { player: entry.player.toString().slice(0, 8), arenaId: arena.arenaId.toString() },
-            'Player lost arena - stats updated'
-          );
-        }
-      }
     }
 
     logger.debug(
@@ -171,7 +94,8 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         arenaId: arena.arenaId.toString(),
         player: entry.player.toString().slice(0, 8),
         isWinner: entry.isWinner,
-        claimed: entry.ownTokensClaimed,
+        claimed: entry.hasClaimed,
+        priceMovement: priceMovementBps,
       },
       'PlayerEntry updated'
     );
@@ -187,6 +111,9 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
     // Invalidate cache for this arena
     await cacheService.invalidateArena(arena.arenaId.toString());
 
+    // Create/update ArenaAsset for this token
+    await updateArenaAssetFromPlayerEntry(arena.arenaId, entry.assetIndex, startPrice, endPrice, priceMovementBps, entry.isWinner);
+
     // Create player action event
     await prisma.playerAction.create({
       data: {
@@ -194,10 +121,11 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         playerWallet: entry.player.toString(),
         actionType: 'enter_arena',
         assetIndex: entry.assetIndex,
-        tokenAmount,
-        usdValue,
+        tokenAmount: entryFeeSol,
+        usdValue: entryFeeSol,
         data: {
           playerIndex: entry.playerIndex,
+          entryFeeLamports: entry.entryFee.toString(),
         },
       },
     });
@@ -207,13 +135,13 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
       where: { playerWallet: entry.player.toString() },
       update: {
         totalArenasPlayed: { increment: 1 },
-        totalUsdWagered: { increment: usdValue },
+        totalUsdWagered: { increment: entryFeeSol },
         lastPlayedAt: entryTimestamp,
       },
       create: {
         playerWallet: entry.player.toString(),
         totalArenasPlayed: 1,
-        totalUsdWagered: usdValue,
+        totalUsdWagered: entryFeeSol,
         lastPlayedAt: entryTimestamp,
       },
     });
@@ -223,7 +151,7 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         arenaId: arena.arenaId.toString(),
         player: entry.player.toString().slice(0, 8),
         assetIndex: entry.assetIndex,
-        usdValue,
+        entryFeeSol,
       },
       'PlayerEntry created'
     );
@@ -231,21 +159,38 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
 }
 
 /**
- * Calculate win rate for a player
+ * Update ArenaAsset from PlayerEntry data
+ * In cryptarena-sol, prices are stored on PlayerEntry, but we maintain ArenaAsset for frontend compatibility
  */
-async function calculateWinRate(playerWallet: string, justWon: boolean): Promise<number> {
-  const stats = await prisma.playerStats.findUnique({
-    where: { playerWallet },
-  });
-  
-  if (!stats) return 0;
-  
-  const totalWins = stats.totalWins + (justWon ? 1 : 0);
-  const totalLosses = stats.totalLosses + (justWon ? 0 : 1);
-  const totalGames = totalWins + totalLosses;
-  
-  if (totalGames === 0) return 0;
-  
-  return Number(((totalWins / totalGames) * 100).toFixed(2));
-}
+async function updateArenaAssetFromPlayerEntry(
+  arenaId: bigint,
+  assetIndex: number,
+  startPrice: number | null,
+  endPrice: number | null,
+  priceMovementBps: number,
+  isWinner: boolean
+): Promise<void> {
+  // Generate a deterministic PDA-like string for the ArenaAsset
+  const arenaPda = `arena_asset_${arenaId}_${assetIndex}`;
 
+  await prisma.arenaAsset.upsert({
+    where: { pda: arenaPda },
+    update: {
+      startPrice,
+      endPrice,
+      priceMovementBps,
+      isWinner,
+      playerCount: 1, // Each token can only have 1 player in cryptarena-sol
+    },
+    create: {
+      arenaId,
+      pda: arenaPda,
+      assetIndex,
+      playerCount: 1,
+      startPrice,
+      endPrice,
+      priceMovementBps,
+      isWinner,
+    },
+  });
+}

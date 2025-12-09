@@ -1,5 +1,6 @@
 /**
- * Start Worker - Handles starting arenas when they reach 10 players
+ * Start Worker - Handles starting arenas and setting start prices (cryptarena-sol)
+ * Flow: 1) Call startArena on program 2) Set start prices for each player
  */
 
 import { Worker, Job, Queue } from 'bullmq';
@@ -9,8 +10,8 @@ import logger from '../../utils/logger';
 import config from '../../config';
 import lifecycleConfig from './config';
 import TransactionSender from './transactionSender';
-import { fetchPricesFromCMC } from '../priceFetcher';
-import { ASSETS } from '../../types/accounts';
+import { fetchPricesFromPyth } from '../priceFetcher';
+import { ASSETS, ArenaStatus } from '../../types/accounts';
 
 export interface StartArenaJobData {
   arenaId: string; // Stored as string because BigInt can't be serialized to JSON
@@ -67,7 +68,9 @@ export class StartWorker {
   }
   
   /**
-   * Add a job to start an arena
+   * Add a job to set start prices for an arena
+   * Note: In cryptarena-sol, admin starts arenas via startArena instruction
+   * This worker handles setting start prices after arena is started
    */
   async addJob(arenaId: bigint, assetIndices: number[]): Promise<string | null> {
     // Check if job already exists for this arena
@@ -95,7 +98,7 @@ export class StartWorker {
     const job = await this.queue.add(
       `start-arena-${arenaId}`,
       {
-        arenaId: arenaId.toString(), // Convert BigInt to string for JSON serialization
+        arenaId: arenaId.toString(),
         assetIndices,
       },
       {
@@ -116,7 +119,9 @@ export class StartWorker {
   }
   
   /**
-   * Process start arena job
+   * Process start arena job:
+   * 1. Call startArena on program (changes status from Waiting to Active)
+   * 2. Set start prices for all players
    */
   private async processJob(job: Job<StartArenaJobData>): Promise<void> {
     const { arenaId: arenaIdStr, assetIndices } = job.data;
@@ -125,33 +130,59 @@ export class StartWorker {
     logger.info({ arenaId: arenaIdStr, attempt: job.attemptsMade + 1, assets: assetIndices }, 'Processing start arena job');
     
     try {
-      // Fetch current prices from CoinMarketCap
-      const symbols = assetIndices.map(i => ASSETS[i]?.symbol).filter(Boolean) as string[];
-      const prices = await fetchPricesFromCMC(symbols);
+      // Step 1: Call startArena on the program
+      logger.info({ arenaId: arenaIdStr }, 'Calling startArena on program...');
+      await this.transactionSender.startArena(arenaIdBigInt);
       
-      if (Object.keys(prices).length === 0) {
-        throw new Error('Failed to fetch prices from CoinMarketCap');
+      // Small delay after starting
+      await this.sleep(1000);
+      
+      // Step 2: Get player entries from database
+      const playerEntries = await db.playerEntry.findMany({
+        where: { arenaId: arenaIdBigInt },
+      });
+      
+      if (playerEntries.length === 0) {
+        throw new Error('No player entries found for arena');
       }
       
-      // Set start price for each asset
-      for (const assetIndex of assetIndices) {
-        const symbol = ASSETS[assetIndex]?.symbol;
-        if (!symbol) continue;
+      // Get unique symbols from player entries
+      const symbols = [...new Set(
+        playerEntries.map(e => ASSETS.find(a => a.index === e.assetIndex)?.symbol).filter(Boolean)
+      )] as string[];
+      
+      // Step 3: Fetch current prices from Pyth
+      const prices = await fetchPricesFromPyth(symbols);
+      
+      if (Object.keys(prices).length === 0) {
+        throw new Error('Failed to fetch prices from Pyth');
+      }
+      
+      // Step 4: Set start price for each player
+      for (const entry of playerEntries) {
+        const asset = ASSETS.find(a => a.index === entry.assetIndex);
+        if (!asset) continue;
         
-        const price = prices[symbol];
+        const price = prices[asset.symbol];
         if (!price) {
-          logger.warn({ symbol, assetIndex }, 'No price found for asset');
+          logger.warn({ symbol: asset.symbol, assetIndex: entry.assetIndex }, 'No price found for asset');
           continue;
         }
         
         // Convert price to on-chain format (8 decimals)
         const onchainPrice = BigInt(Math.floor(price * 1e8));
         
-        logger.info({ arenaId: arenaIdStr, symbol, price, onchainPrice: onchainPrice.toString() }, 'Setting start price');
+        logger.info({ 
+          arenaId: arenaIdStr, 
+          player: entry.playerWallet.slice(0, 8), 
+          symbol: asset.symbol, 
+          price, 
+          onchainPrice: onchainPrice.toString() 
+        }, 'Setting start price');
         
         await this.transactionSender.setStartPrice(
           arenaIdBigInt,
-          assetIndex,
+          entry.playerWallet,
           onchainPrice
         );
         
@@ -170,12 +201,11 @@ export class StartWorker {
       
       // Get arena info to schedule end job
       const arenaInfo = await this.transactionSender.getArenaInfo(arenaIdBigInt);
-      if (arenaInfo && arenaInfo.status === 3) { // Active
-        // Emit event to schedule end job
+      if (arenaInfo && arenaInfo.status === ArenaStatus.Active) {
         const endTime = new Date(Number(arenaInfo.endTimestamp) * 1000);
         logger.info({ arenaId: arenaIdStr, endTime: endTime.toISOString() }, 'Arena started successfully');
         
-        // Schedule end job (will be picked up by end worker)
+        // Schedule end job
         await db.arenaProcessingState.update({
           where: { arenaId: arenaIdBigInt },
           data: {
@@ -187,7 +217,6 @@ export class StartWorker {
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // Update processing state with error
       await db.arenaProcessingState.update({
         where: { arenaId: arenaIdBigInt },
         data: {
@@ -197,7 +226,7 @@ export class StartWorker {
         },
       });
       
-      throw error; // Re-throw to trigger retry
+      throw error;
     }
   }
   

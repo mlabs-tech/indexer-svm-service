@@ -5,10 +5,13 @@ import config from '../config';
 import logger from '../utils/logger';
 
 /**
- * Process GlobalState account update
+ * Process GlobalState account update (cryptarena-sol)
  */
 export async function processGlobalState(pubkey: PublicKey, data: Buffer): Promise<void> {
   const state = parseGlobalState(data);
+
+  // Convert entry fee from lamports to SOL
+  const entryFeeSol = Number(state.entryFee) / 1e9;
 
   await prisma.protocolState.upsert({
     where: { programId: config.programId },
@@ -17,8 +20,8 @@ export async function processGlobalState(pubkey: PublicKey, data: Buffer): Promi
       treasuryWallet: state.treasuryWallet.toString(),
       arenaDuration: Number(state.arenaDuration),
       currentArenaId: state.currentArenaId,
-      maxPlayersPerArena: state.maxPlayersPerArena,
-      maxSameAsset: state.maxSameAsset,
+      maxPlayersPerArena: 10,  // Hardcoded in cryptarena-sol
+      maxSameAsset: 1,         // Each token can only be picked once in cryptarena-sol
       isPaused: state.isPaused,
     },
     create: {
@@ -27,8 +30,8 @@ export async function processGlobalState(pubkey: PublicKey, data: Buffer): Promi
       treasuryWallet: state.treasuryWallet.toString(),
       arenaDuration: Number(state.arenaDuration),
       currentArenaId: state.currentArenaId,
-      maxPlayersPerArena: state.maxPlayersPerArena,
-      maxSameAsset: state.maxSameAsset,
+      maxPlayersPerArena: 10,
+      maxSameAsset: 1,
       isPaused: state.isPaused,
     },
   });
@@ -36,9 +39,10 @@ export async function processGlobalState(pubkey: PublicKey, data: Buffer): Promi
   logger.info(
     { 
       currentArenaId: state.currentArenaId.toString(),
+      entryFeeSol,
+      arenaDuration: Number(state.arenaDuration),
       isPaused: state.isPaused 
     },
     'GlobalState updated'
   );
 }
-
