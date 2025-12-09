@@ -205,7 +205,7 @@ async function handleSetStartPrice(
 
   if (!arena) return;
 
-  const price = Number(parsed.price) / 1e8;
+  const price = Number(parsed.price) / 1e12;
 
   // Get asset index from arenaAsset
   const arenaAsset = await prisma.arenaAsset.findFirst({
@@ -252,7 +252,7 @@ async function handleSetEndPrice(
 
   if (!arena) return;
 
-  const price = Number(parsed.price) / 1e8;
+  const price = Number(parsed.price) / 1e12;
 
   const arenaAsset = await prisma.arenaAsset.findFirst({
     where: { pda: accounts.arenaAsset },

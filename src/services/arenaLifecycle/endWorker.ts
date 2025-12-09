@@ -250,8 +250,8 @@ export class EndWorker {
           continue;
         }
         
-        // Convert price to on-chain format (8 decimals)
-        const onchainPrice = BigInt(Math.floor(price * 1e8));
+        // Convert price to on-chain format (12 decimals)
+        const onchainPrice = BigInt(Math.floor(price * 1e12));
         
         logger.info({ 
           arenaId: arenaIdStr, 

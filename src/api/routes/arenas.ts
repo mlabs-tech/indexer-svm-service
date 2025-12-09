@@ -315,10 +315,10 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
         playerCount: asset.playerCount,
         startPrice: asset.startPrice ? Number(asset.startPrice) : null,
         endPrice: asset.endPrice ? Number(asset.endPrice) : null,
-        // Raw price movement from Solana (10^8 precision). Divide by 1,000,000 to get percentage.
+        // Raw price movement from Solana (10^12 precision). Divide by 1,000,000,000,000 to get percentage.
         priceMovementRaw: asset.priceMovementRaw ? asset.priceMovementRaw.toString() : null,
-        // For backward compatibility: convert to BPS (divide raw by 10000)
-        priceMovementBps: asset.priceMovementRaw ? Math.round(Number(asset.priceMovementRaw) / 10000) : null,
+        // For backward compatibility: convert to BPS (divide raw by 1e10, since BPS = percentage * 100)
+        priceMovementBps: asset.priceMovementRaw ? Math.round(Number(asset.priceMovementRaw) / 1e10) : null,
         isWinner: asset.isWinner,
       })),
       playerEntries: arena.playerEntries.map((entry) => ({
@@ -528,7 +528,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
             startPrice: asset.startPrice ? Number(asset.startPrice) : null,
             endPrice: asset.endPrice ? Number(asset.endPrice) : null,
             priceMovementRaw: asset.priceMovementRaw ? asset.priceMovementRaw.toString() : null,
-            priceMovementBps: asset.priceMovementRaw ? Math.round(Number(asset.priceMovementRaw) / 10000) : null,
+            priceMovementBps: asset.priceMovementRaw ? Math.round(Number(asset.priceMovementRaw) / 1e10) : null,
           })),
         };
       }),

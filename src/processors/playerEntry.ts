@@ -29,12 +29,12 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
   const entryFeeSol = Number(entry.entryFee) / 1e9;
   const entryTimestamp = new Date(Number(entry.entryTimestamp) * 1000);
 
-  // Convert prices (8 decimals)
-  const startPrice = entry.startPrice > 0n ? Number(entry.startPrice) / 1e8 : null;
-  const endPrice = entry.endPrice > 0n ? Number(entry.endPrice) / 1e8 : null;
-  // Store raw price movement from Solana (10^8 precision)
-  // To convert to percentage: priceMovementRaw / 1,000,000
-  // e.g., 257863 = 0.257863%
+  // Convert prices (12 decimals)
+  const startPrice = entry.startPrice > 0n ? Number(entry.startPrice) / 1e12 : null;
+  const endPrice = entry.endPrice > 0n ? Number(entry.endPrice) / 1e12 : null;
+  // Store raw price movement from Solana (10^12 precision)
+  // To convert to percentage: priceMovementRaw / 1,000,000,000,000
+  // e.g., 257863000000 = 0.257863%
   const priceMovementRaw = entry.priceMovement;
 
   const existingEntry = await prisma.playerEntry.findUnique({
