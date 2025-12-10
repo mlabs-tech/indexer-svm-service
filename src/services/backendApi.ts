@@ -6,7 +6,7 @@
 import logger from '../utils/logger';
 
 const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080';
-const BACKEND_API_KEY = process.env.BACKEND_API_KEY || 'cryptarena-indexer-secret-key-2024';
+const BACKEND_API_KEY = process.env.BACKEND_API_KEY || '';
 
 // ============================================================================
 // Mastery Points Types
