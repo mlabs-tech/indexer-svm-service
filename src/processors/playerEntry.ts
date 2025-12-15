@@ -3,6 +3,7 @@ import { parsePlayerEntry } from '../parsers/accounts';
 import prisma from '../db';
 import logger from '../utils/logger';
 import { cacheService } from '../services/cacheService';
+import { getArenaLifecycleManager } from '../services/arenaLifecycle';
 
 /**
  * Process PlayerEntry account update (cryptarena-sol)
@@ -148,6 +149,15 @@ export async function processPlayerEntry(pubkey: PublicKey, data: Buffer): Promi
         lastPlayedAt: entryTimestamp,
       },
     });
+
+    // Notify bot filler that a player joined (reset inactivity timer)
+    try {
+      const lifecycleManager = getArenaLifecycleManager();
+      lifecycleManager.onPlayerJoined(arena.arenaId);
+    } catch (error) {
+      // Don't fail player entry processing if bot filler notification fails
+      logger.debug({ error }, 'Failed to notify lifecycle manager of player join');
+    }
 
     logger.info(
       { 

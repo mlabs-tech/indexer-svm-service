@@ -4,24 +4,28 @@
  * Handles automatic starting and ending of arenas:
  * - After 10 minutes from first player join: automatically start arena
  * - When arena duration ends (10 min): automatically end arena (set end prices, finalize)
+ * - Bot filler: automatically adds bots when waiting room is inactive for 1 minute
  */
 
 import db from '../../db';
 import logger from '../../utils/logger';
 import { StartWorker } from './startWorker';
 import { EndWorker } from './endWorker';
+import { BotFiller, getBotFiller } from './botFiller';
 import lifecycleConfig from './config';
 import { ArenaStatus } from '../../types/accounts';
 
 export class ArenaLifecycleManager {
   private startWorker: StartWorker;
   private endWorker: EndWorker;
+  private botFiller: BotFiller;
   private isRunning: boolean = false;
   private countdownCheckInterval: NodeJS.Timeout | null = null;
   
   constructor() {
     this.startWorker = new StartWorker();
     this.endWorker = new EndWorker();
+    this.botFiller = getBotFiller();
   }
   
   /**
@@ -39,6 +43,9 @@ export class ArenaLifecycleManager {
     await this.startWorker.start();
     await this.endWorker.start();
     
+    // Start bot filler
+    await this.botFiller.start();
+    
     // Start countdown checker (checks every 10 seconds for arenas past 10 min countdown)
     this.countdownCheckInterval = setInterval(
       () => this.checkWaitingArenasCountdown(),
@@ -51,6 +58,7 @@ export class ArenaLifecycleManager {
       startQueue: lifecycleConfig.queues.startArena, 
       endQueue: lifecycleConfig.queues.endArena,
       countdownMs: lifecycleConfig.waitingCountdownMs,
+      botFillerEnabled: lifecycleConfig.botFiller.enabled,
     }, 'Arena Lifecycle Manager started');
   }
   
@@ -97,6 +105,13 @@ export class ArenaLifecycleManager {
     } catch (error) {
       logger.error({ error }, 'Error checking waiting arenas countdown');
     }
+  }
+  
+  /**
+   * Called when a player joins an arena - notify bot filler to reset inactivity timer
+   */
+  onPlayerJoined(arenaId: bigint): void {
+    this.botFiller.onPlayerJoined(arenaId);
   }
   
   /**
@@ -188,6 +203,7 @@ export class ArenaLifecycleManager {
     
     await this.startWorker.stop();
     await this.endWorker.stop();
+    await this.botFiller.stop();
     
     this.isRunning = false;
     

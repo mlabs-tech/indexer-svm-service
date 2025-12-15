@@ -15,6 +15,16 @@ export const lifecycleConfig = {
   // Waiting room countdown (10 minutes from first player join)
   waitingCountdownMs: 10 * 60 * 1000,  // 10 minutes in milliseconds
   
+  // Bot filler configuration
+  botFiller: {
+    enabled: true,
+    inactivityTimeoutMs: 60 * 1000,     // 1 minute - add bot if no new player joins
+    checkIntervalMs: 10 * 1000,          // Check every 10 seconds
+    maxPlayersPerArena: 10,              // Max players before arena is full
+    airdropAmountLamports: 100_000_000,  // 0.1 SOL airdrop when bot has insufficient balance
+    minBalanceLamports: 60_000_000,      // Minimum balance needed (0.06 SOL = entry fee + tx fees)
+  },
+  
   // Job queue names
   queues: {
     startArena: 'arena-start',

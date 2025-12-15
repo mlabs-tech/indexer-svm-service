@@ -36,6 +36,9 @@ RUN npx prisma@6.8.2 generate
 # Copy built files
 COPY --from=builder /app/dist ./dist
 
+# Copy bot wallets (for auto-filling arenas)
+COPY bot-wallets ./bot-wallets
+
 # Copy entrypoint script
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh

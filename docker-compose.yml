@@ -16,6 +16,7 @@ services:
       - BACKEND_API_URL=http://host.docker.internal:8080
       - BACKEND_API_KEY=${BACKEND_API_KEY:-}
       - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY:-}
+      - BOT_FUNDER_PRIVATE_KEY=${BOT_FUNDER_PRIVATE_KEY:-}
     ports:
       - "3001:3001"
     depends_on:
