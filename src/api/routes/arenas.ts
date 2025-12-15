@@ -165,7 +165,7 @@ export async function registerArenaRoutes(app: FastifyInstance): Promise<void> {
       // Calculate real-time total pool value using latest market prices
       const poolValue = await calculateRealTimePoolValue(currentArena.arenaId);
 
-      // Calculate countdown info (3 minutes from arena creation)
+      // Calculate countdown info (10 minutes from arena creation)
       const countdownStartAt = currentArena.createdAt;
       const countdownEndsAt = new Date(countdownStartAt.getTime() + lifecycleConfig.waitingCountdownMs);
       const countdownRemainingMs = Math.max(0, countdownEndsAt.getTime() - Date.now());

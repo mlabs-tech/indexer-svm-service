@@ -2,7 +2,7 @@
  * Arena Lifecycle Manager
  * 
  * Handles automatic starting and ending of arenas:
- * - After 3 minutes from first player join: automatically start arena
+ * - After 10 minutes from first player join: automatically start arena
  * - When arena duration ends (10 min): automatically end arena (set end prices, finalize)
  */
 
@@ -39,7 +39,7 @@ export class ArenaLifecycleManager {
     await this.startWorker.start();
     await this.endWorker.start();
     
-    // Start countdown checker (checks every 10 seconds for arenas past 3 min countdown)
+    // Start countdown checker (checks every 10 seconds for arenas past 10 min countdown)
     this.countdownCheckInterval = setInterval(
       () => this.checkWaitingArenasCountdown(),
       lifecycleConfig.startCheckIntervalMs
@@ -55,13 +55,13 @@ export class ArenaLifecycleManager {
   }
   
   /**
-   * Check for waiting arenas that have passed the 3-minute countdown
+   * Check for waiting arenas that have passed the 10-minute countdown
    */
   private async checkWaitingArenasCountdown(): Promise<void> {
     try {
       const countdownThreshold = new Date(Date.now() - lifecycleConfig.waitingCountdownMs);
       
-      // Find waiting arenas that were created more than 3 minutes ago
+      // Find waiting arenas that were created more than 10 minutes ago
       const waitingArenas = await db.arena.findMany({
         where: {
           status: ArenaStatus.Waiting,
@@ -89,7 +89,7 @@ export class ArenaLifecycleManager {
           arenaId: arena.arenaId.toString(), 
           playerCount: arena.playerCount,
           createdAt: arena.createdAt.toISOString(),
-        }, '3-minute countdown reached, starting arena');
+        }, '10-minute countdown reached, starting arena');
         
         const assetIndices = arena.playerEntries.map(e => e.assetIndex);
         await this.startWorker.addJob(arena.arenaId, assetIndices);
@@ -101,7 +101,7 @@ export class ArenaLifecycleManager {
   
   /**
    * Called when an arena becomes Ready (10 players) - NOW: immediately start
-   * Note: We keep this for immediate start when full, but main trigger is 3-min countdown
+   * Note: We keep this for immediate start when full, but main trigger is 10-min countdown
    */
   async onArenaReady(arenaId: bigint, assetIndices: number[]): Promise<void> {
     logger.info({ arenaId: arenaId.toString(), assets: assetIndices }, 'Arena ready (admin triggered), setting prices');
