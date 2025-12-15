@@ -1,12 +1,31 @@
 import { FastifyInstance } from 'fastify';
 import prisma from '../../db';
 import { getConnection, getSlot } from '../../solana/connection';
+import { getLeaderStatus } from '../../services/leaderElection';
 import logger from '../../utils/logger';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
-  // Basic health check
+  // Basic health check (used by ALB/ECS for container health)
   app.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() };
+    // Always return ok if the server is responding
+    // This ensures healthy containers aren't killed during leader election
+    const leaderStatus = getLeaderStatus();
+    return { 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      role: leaderStatus.isLeader ? 'leader' : 'follower',
+      instanceId: leaderStatus.instanceId,
+    };
+  });
+
+  // Leader status endpoint
+  app.get('/health/leader', async () => {
+    const leaderStatus = getLeaderStatus();
+    return {
+      isLeader: leaderStatus.isLeader,
+      instanceId: leaderStatus.instanceId,
+      role: leaderStatus.isLeader ? 'leader' : 'follower',
+    };
   });
 
   // Database health check

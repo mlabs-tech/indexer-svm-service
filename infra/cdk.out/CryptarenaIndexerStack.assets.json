@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "041d691cb20697d74e8b26fb69982b6dd965fa291139341326aa65c723d02102": {
+      "displayName": "cryptarena-indexer Template",
+      "source": {
+        "path": "CryptarenaIndexerStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "498920964263-us-east-1-1ff8d9af": {
+          "bucketName": "cdk-hnb659fds-assets-498920964263-us-east-1",
+          "objectKey": "041d691cb20697d74e8b26fb69982b6dd965fa291139341326aa65c723d02102.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::498920964263:role/cdk-hnb659fds-file-publishing-role-498920964263-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

@@ -1,0 +1,818 @@
+{
+ "Description": "Cryptarena Indexer Service - ECS Fargate with ElastiCache Redis",
+ "Resources": {
+  "AlbSecurityGroup86A59E99": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for ALB",
+    "GroupName": "cryptarena-indexer-alb-sg",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow HTTP from internet",
+      "FromPort": 80,
+      "IpProtocol": "tcp",
+      "ToPort": 80
+     },
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow HTTPS from internet",
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     }
+    ],
+    "VpcId": "vpc-f84cb485"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/AlbSecurityGroup/Resource"
+   }
+  },
+  "EcsSecurityGroup44008BF1": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for ECS tasks",
+    "GroupName": "cryptarena-indexer-ecs-sg",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": "vpc-f84cb485"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/EcsSecurityGroup/Resource"
+   }
+  },
+  "EcsSecurityGroupfromCryptarenaIndexerStackAlbSecurityGroup2710777D30011622A25E": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Allow traffic from ALB",
+    "FromPort": 3001,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "EcsSecurityGroup44008BF1",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "AlbSecurityGroup86A59E99",
+      "GroupId"
+     ]
+    },
+    "ToPort": 3001
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/EcsSecurityGroup/from CryptarenaIndexerStackAlbSecurityGroup2710777D:3001"
+   }
+  },
+  "RedisSecurityGroupB05951F6": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for ElastiCache Redis",
+    "GroupName": "cryptarena-indexer-redis-sg",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "255.255.255.255/32",
+      "Description": "Disallow all traffic",
+      "FromPort": 252,
+      "IpProtocol": "icmp",
+      "ToPort": 86
+     }
+    ],
+    "VpcId": "vpc-f84cb485"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/RedisSecurityGroup/Resource"
+   }
+  },
+  "RedisSecurityGroupfromCryptarenaIndexerStackEcsSecurityGroup3EB6BB7B6379A7D0F828": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Allow Redis access from ECS tasks",
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "RedisSecurityGroupB05951F6",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EcsSecurityGroup44008BF1",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/RedisSecurityGroup/from CryptarenaIndexerStackEcsSecurityGroup3EB6BB7B:6379"
+   }
+  },
+  "RedisSubnetGroup": {
+   "Type": "AWS::ElastiCache::SubnetGroup",
+   "Properties": {
+    "CacheSubnetGroupName": "cryptarena-indexer-redis-subnet",
+    "Description": "Subnet group for Cryptarena Indexer Redis",
+    "SubnetIds": [
+     "subnet-cc49e3ed",
+     "subnet-96b4cbdb",
+     "subnet-0d862e52",
+     "subnet-fafd529c",
+     "subnet-290cff18",
+     "subnet-e87d1ce6"
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/RedisSubnetGroup"
+   }
+  },
+  "RedisCluster": {
+   "Type": "AWS::ElastiCache::CacheCluster",
+   "Properties": {
+    "AutoMinorVersionUpgrade": true,
+    "CacheNodeType": "cache.t3.micro",
+    "CacheSubnetGroupName": "cryptarena-indexer-redis-subnet",
+    "ClusterName": "cryptarena-indexer-redis",
+    "Engine": "redis",
+    "EngineVersion": "7.1",
+    "NumCacheNodes": 1,
+    "Port": 6379,
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "RedisSecurityGroupB05951F6",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "RedisSubnetGroup"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/RedisCluster"
+   }
+  },
+  "IndexerCluster06D9DDF2": {
+   "Type": "AWS::ECS::Cluster",
+   "Properties": {
+    "ClusterName": "cryptarena-indexer",
+    "ClusterSettings": [
+     {
+      "Name": "containerInsights",
+      "Value": "disabled"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerCluster/Resource"
+   }
+  },
+  "IndexerTaskDefTaskRoleFB0CDE20": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerTaskDef/TaskRole/Resource"
+   }
+  },
+  "IndexerTaskDefTaskRoleDefaultPolicy07E0FE38": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "IndexerTaskDefTaskRoleDefaultPolicy07E0FE38",
+    "Roles": [
+     {
+      "Ref": "IndexerTaskDefTaskRoleFB0CDE20"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerTaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "IndexerTaskDefCE1660C9": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "PORT",
+        "Value": "3001"
+       },
+       {
+        "Name": "HOST",
+        "Value": "0.0.0.0"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::GetAtt": [
+             "RedisCluster",
+             "RedisEndpoint.Address"
+            ]
+           },
+           ":",
+           {
+            "Fn::GetAtt": [
+             "RedisCluster",
+             "RedisEndpoint.Port"
+            ]
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "DATABASE_URL",
+        "Value": "postgresql://cryptarenadb:Cr1pt4r3nA12%23@cryptarena-indexer-db-test.cibez30jjkjs.us-east-1.rds.amazonaws.com:5432/postgres"
+       },
+       {
+        "Name": "SOLANA_RPC_URL",
+        "Value": "https://devnet.helius-rpc.com/?api-key=aef82c1e-d2b4-4c37-90c9-7bb84228d5cf"
+       },
+       {
+        "Name": "SOLANA_WS_URL",
+        "Value": "wss://devnet.helius-rpc.com/?api-key=aef82c1e-d2b4-4c37-90c9-7bb84228d5cf"
+       },
+       {
+        "Name": "PROGRAM_ID",
+        "Value": "GX4gVWUtVgq6XxL8oHYy6psoN9KFdJhwnds2T3NHe5na"
+       },
+       {
+        "Name": "ADMIN_PRIVATE_KEY",
+        "Value": "[221,34,189,224,111,130,124,245,207,145,51,81,200,250,223,226,22,29,189,166,115,69,194,81,230,179,113,129,198,121,145,242,46,253,32,4,254,204,184,103,56,62,149,117,124,11,175,167,167,16,124,215,254,219,163,54,115,221,126,86,207,105,174,243]"
+       },
+       {
+        "Name": "BOT_FUNDER_PRIVATE_KEY",
+        "Value": "3sLvoHNAjrQuyUezPgSY48TJMGtMJQ58FqNqyeU8rYNUcjvRzgx1v6dHxWTLehwnUojkTuZNUxxCFJSqcY3mobnN"
+       },
+       {
+        "Name": "PYTH_HERMES_URL",
+        "Value": "https://hermes.pyth.network"
+       },
+       {
+        "Name": "BACKEND_API_URL",
+        "Value": "https://cryptarena-be-test.entertainm.io"
+       },
+       {
+        "Name": "BACKEND_API_KEY",
+        "Value": "podfgidhiau88d7374adsa69m"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1"
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 10
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         "498920964263.dkr.ecr.us-east-1.",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/cryptarena-indexer:latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "IndexerLogGroup18BD4CD9"
+        },
+        "awslogs-stream-prefix": "cryptarena-indexer",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "cryptarena-indexer",
+      "PortMappings": [
+       {
+        "ContainerPort": 3001,
+        "Protocol": "tcp"
+       }
+      ]
+     }
+    ],
+    "Cpu": "512",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "IndexerTaskDefExecutionRoleD08B655D",
+      "Arn"
+     ]
+    },
+    "Family": "cryptarena-indexer",
+    "Memory": "1024",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "RuntimePlatform": {
+     "CpuArchitecture": "ARM64",
+     "OperatingSystemFamily": "LINUX"
+    },
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "IndexerTaskDefTaskRoleFB0CDE20",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerTaskDef/Resource"
+   }
+  },
+  "IndexerTaskDefExecutionRoleD08B655D": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerTaskDef/ExecutionRole/Resource"
+   }
+  },
+  "IndexerTaskDefExecutionRoleDefaultPolicy1527BB53": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": "arn:aws:ecr:us-east-1:498920964263:repository/cryptarena-indexer"
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "IndexerLogGroup18BD4CD9",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "IndexerTaskDefExecutionRoleDefaultPolicy1527BB53",
+    "Roles": [
+     {
+      "Ref": "IndexerTaskDefExecutionRoleD08B655D"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerTaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "IndexerLogGroup18BD4CD9": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/ecs/cryptarena-indexer",
+    "RetentionInDays": 7
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerLogGroup/Resource"
+   }
+  },
+  "IndexerAlb7CCAE60C": {
+   "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+   "Properties": {
+    "LoadBalancerAttributes": [
+     {
+      "Key": "deletion_protection.enabled",
+      "Value": "false"
+     }
+    ],
+    "Name": "cryptarena-indexer-alb",
+    "Scheme": "internet-facing",
+    "SecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "AlbSecurityGroup86A59E99",
+       "GroupId"
+      ]
+     }
+    ],
+    "Subnets": [
+     "subnet-cc49e3ed",
+     "subnet-96b4cbdb",
+     "subnet-0d862e52",
+     "subnet-fafd529c",
+     "subnet-290cff18",
+     "subnet-e87d1ce6"
+    ],
+    "Type": "application"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerAlb/Resource"
+   }
+  },
+  "IndexerAlbHttpsListener7749C025": {
+   "Type": "AWS::ElasticLoadBalancingV2::Listener",
+   "Properties": {
+    "Certificates": [
+     {
+      "CertificateArn": "arn:aws:acm:us-east-1:498920964263:certificate/07cf5962-cdf0-43d5-b3b0-b761118377eb"
+     }
+    ],
+    "DefaultActions": [
+     {
+      "TargetGroupArn": {
+       "Ref": "IndexerAlbHttpsListenerIndexerTargetsGroup80674F7D"
+      },
+      "Type": "forward"
+     }
+    ],
+    "LoadBalancerArn": {
+     "Ref": "IndexerAlb7CCAE60C"
+    },
+    "Port": 443,
+    "Protocol": "HTTPS",
+    "SslPolicy": "ELBSecurityPolicy-TLS-1-2-2017-01"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerAlb/HttpsListener/Resource"
+   }
+  },
+  "IndexerAlbHttpsListenerIndexerTargetsGroup80674F7D": {
+   "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+   "Properties": {
+    "HealthCheckIntervalSeconds": 30,
+    "HealthCheckPath": "/health",
+    "HealthCheckTimeoutSeconds": 10,
+    "HealthyThresholdCount": 2,
+    "Matcher": {
+     "HttpCode": "200"
+    },
+    "Port": 3001,
+    "Protocol": "HTTP",
+    "TargetGroupAttributes": [
+     {
+      "Key": "deregistration_delay.timeout_seconds",
+      "Value": "30"
+     },
+     {
+      "Key": "stickiness.enabled",
+      "Value": "false"
+     }
+    ],
+    "TargetType": "ip",
+    "UnhealthyThresholdCount": 3,
+    "VpcId": "vpc-f84cb485"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerAlb/HttpsListener/IndexerTargetsGroup/Resource"
+   }
+  },
+  "IndexerAlbHttpListener2782C36F": {
+   "Type": "AWS::ElasticLoadBalancingV2::Listener",
+   "Properties": {
+    "DefaultActions": [
+     {
+      "RedirectConfig": {
+       "Port": "443",
+       "Protocol": "HTTPS",
+       "StatusCode": "HTTP_301"
+      },
+      "Type": "redirect"
+     }
+    ],
+    "LoadBalancerArn": {
+     "Ref": "IndexerAlb7CCAE60C"
+    },
+    "Port": 80,
+    "Protocol": "HTTP"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerAlb/HttpListener/Resource"
+   }
+  },
+  "IndexerARecord75F67ED8": {
+   "Type": "AWS::Route53::RecordSet",
+   "Properties": {
+    "AliasTarget": {
+     "DNSName": {
+      "Fn::Join": [
+       "",
+       [
+        "dualstack.",
+        {
+         "Fn::GetAtt": [
+          "IndexerAlb7CCAE60C",
+          "DNSName"
+         ]
+        }
+       ]
+      ]
+     },
+     "HostedZoneId": {
+      "Fn::GetAtt": [
+       "IndexerAlb7CCAE60C",
+       "CanonicalHostedZoneID"
+      ]
+     }
+    },
+    "HostedZoneId": "Z01978521EZN8RUTICIWE",
+    "Name": "cryptarena-indexer-test.entertainm.io.",
+    "Type": "A"
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerARecord/Resource"
+   }
+  },
+  "IndexerServiceD7CB565C": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "IndexerCluster06D9DDF2"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 100
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "EnableExecuteCommand": true,
+    "HealthCheckGracePeriodSeconds": 120,
+    "LaunchType": "FARGATE",
+    "LoadBalancers": [
+     {
+      "ContainerName": "cryptarena-indexer",
+      "ContainerPort": 3001,
+      "TargetGroupArn": {
+       "Ref": "IndexerAlbHttpsListenerIndexerTargetsGroup80674F7D"
+      }
+     }
+    ],
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "ENABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "EcsSecurityGroup44008BF1",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       "subnet-cc49e3ed",
+       "subnet-96b4cbdb",
+       "subnet-0d862e52",
+       "subnet-fafd529c",
+       "subnet-290cff18",
+       "subnet-e87d1ce6"
+      ]
+     }
+    },
+    "ServiceName": "cryptarena-indexer",
+    "TaskDefinition": {
+     "Ref": "IndexerTaskDefCE1660C9"
+    }
+   },
+   "DependsOn": [
+    "IndexerAlbHttpsListenerIndexerTargetsGroup80674F7D",
+    "IndexerAlbHttpsListener7749C025",
+    "IndexerTaskDefTaskRoleDefaultPolicy07E0FE38",
+    "IndexerTaskDefTaskRoleFB0CDE20"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/IndexerService/Service"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31QS27CMBA9S/fGbY04AFC1qoTUKmFfDc6QDhhP5A8IWb57FSegtIuu5v1Gnmcl1VxJ9QAXP9PNcWZoJ1MdQB9FhZ6j0yjg4r8Saicr7NhTYHddgUeBWslUo46OwvXNcezEem//F95t69D7LNCAD6RBf6NMfSruLIb70ro31ib6gC4L1F6mkRV3hK/gWgi4BX98wT1ZCsS2D/xV2AYgi26ijbs1ujNpHA4tMAuCk0wVm6KW+cmG9LWnA8rCcOtl2nB7P/mG790MQ7MDA1aTbc9KpmXXGdLQP79haFbFGxr94tMc+YB2zNzwxN+CayffNqFZOI4BF3OZlhVqdk1pU1CNIeeefsTQxZCF5QblwT+elZLPC/n0cPBEMxdtoBPKapg/Hfzg/ywCAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "CryptarenaIndexerStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "VpcId": {
+   "Description": "VPC ID",
+   "Value": "vpc-f84cb485"
+  },
+  "ClusterArn": {
+   "Description": "ECS Cluster ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "IndexerCluster06D9DDF2",
+     "Arn"
+    ]
+   }
+  },
+  "ServiceArn": {
+   "Description": "ECS Service ARN",
+   "Value": {
+    "Ref": "IndexerServiceD7CB565C"
+   }
+  },
+  "RepositoryUri": {
+   "Description": "ECR Repository URI",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "498920964263.dkr.ecr.us-east-1.",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/cryptarena-indexer"
+     ]
+    ]
+   }
+  },
+  "LoadBalancerDns": {
+   "Description": "Application Load Balancer DNS",
+   "Value": {
+    "Fn::GetAtt": [
+     "IndexerAlb7CCAE60C",
+     "DNSName"
+    ]
+   }
+  },
+  "RedisEndpoint": {
+   "Description": "ElastiCache Redis endpoint",
+   "Value": {
+    "Fn::Join": [
+     ":",
+     [
+      {
+       "Fn::GetAtt": [
+        "RedisCluster",
+        "RedisEndpoint.Address"
+       ]
+      },
+      {
+       "Fn::GetAtt": [
+        "RedisCluster",
+        "RedisEndpoint.Port"
+       ]
+      }
+     ]
+    ]
+   }
+  },
+  "ServiceUrl": {
+   "Description": "Service URL (HTTPS)",
+   "Value": "https://cryptarena-indexer-test.entertainm.io"
+  },
+  "DomainName": {
+   "Description": "Custom domain name",
+   "Value": "cryptarena-indexer-test.entertainm.io"
+  },
+  "EcsSecurityGroupId": {
+   "Description": "ECS Security Group ID - Add this to your RDS security group to allow connections",
+   "Value": {
+    "Fn::GetAtt": [
+     "EcsSecurityGroup44008BF1",
+     "GroupId"
+    ]
+   }
+  },
+  "SubnetIds": {
+   "Description": "Subnet IDs used for the service",
+   "Value": "subnet-cc49e3ed,subnet-96b4cbdb,subnet-0d862e52,subnet-fafd529c,subnet-290cff18,subnet-e87d1ce6"
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
