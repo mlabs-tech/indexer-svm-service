@@ -12,6 +12,7 @@
  */
 
 import { PublicKey } from '@solana/web3.js';
+
 import { connectDatabase, disconnectDatabase } from '../src/db';
 import { getProgramAccounts } from '../src/solana/connection';
 import { identifyAccountType } from '../src/parsers/accounts';

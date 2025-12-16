@@ -9,7 +9,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
       - SOLANA_WS_URL=${SOLANA_WS_URL:-wss://api.devnet.solana.com}
-      - PROGRAM_ID=GX4gVWUtVgq6XxL8oHYy6psoN9KFdJhwnds2T3NHe5na
+      - PROGRAM_ID=${PROGRAM_ID:-J1HvjpKh1tUQQFJ3Fm5ZM7h4GSrvivdWTwzQ3UALfT9T}
       - PORT=3001
       - LOG_LEVEL=info
       - PYTH_HERMES_URL=https://hermes.pyth.network
@@ -17,6 +17,8 @@ services:
       - BACKEND_API_KEY=${BACKEND_API_KEY:-}
       - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY:-}
       - BOT_FUNDER_PRIVATE_KEY=${BOT_FUNDER_PRIVATE_KEY:-}
+      - WAITING_ROOM_COUNTDOWN_MS=${WAITING_ROOM_COUNTDOWN_MS:-180000}
+      - BOT_FILLER_INACTIVITY_TIMEOUT_MS=${BOT_FILLER_INACTIVITY_TIMEOUT_MS:-30000}
     ports:
       - "3001:3001"
     depends_on:

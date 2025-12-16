@@ -244,6 +244,8 @@ export class IndexerStack extends cdk.Stack {
         ...(envVars.PYTH_HERMES_URL && { PYTH_HERMES_URL: envVars.PYTH_HERMES_URL }),
         ...(envVars.BACKEND_API_URL && { BACKEND_API_URL: envVars.BACKEND_API_URL }),
         ...(envVars.BACKEND_API_KEY && { BACKEND_API_KEY: envVars.BACKEND_API_KEY }),
+        ...(envVars.WAITING_ROOM_COUNTDOWN_MS && { WAITING_ROOM_COUNTDOWN_MS: envVars.WAITING_ROOM_COUNTDOWN_MS }),
+        ...(envVars.BOT_FILLER_INACTIVITY_TIMEOUT_MS && { BOT_FILLER_INACTIVITY_TIMEOUT_MS: envVars.BOT_FILLER_INACTIVITY_TIMEOUT_MS }),
       },
       healthCheck: {
         command: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1'],

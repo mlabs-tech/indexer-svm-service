@@ -63,41 +63,90 @@ export class ArenaLifecycleManager {
   }
   
   /**
-   * Check for waiting arenas that have passed the 10-minute countdown
+   * Check for waiting arenas that have passed the countdown (from first player join)
+   * Also recovers stuck arenas in 'processing' status
    */
   private async checkWaitingArenasCountdown(): Promise<void> {
     try {
       const countdownThreshold = new Date(Date.now() - lifecycleConfig.waitingCountdownMs);
+      const stuckThreshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago - if processing longer, consider stuck
       
-      // Find waiting arenas that were created more than 10 minutes ago
+      // Find waiting arenas with at least 1 player
       const waitingArenas = await db.arena.findMany({
         where: {
           status: ArenaStatus.Waiting,
           playerCount: { gte: 1 }, // At least 1 player
-          createdAt: { lte: countdownThreshold },
         },
         include: {
           playerEntries: {
-            select: { playerWallet: true, assetIndex: true },
+            select: { playerWallet: true, assetIndex: true, createdAt: true },
           },
         },
       });
       
       for (const arena of waitingArenas) {
-        // Check if already being processed
+        // Check processing state
         const state = await db.arenaProcessingState.findUnique({
           where: { arenaId: arena.arenaId },
         });
         
-        if (state && state.startStatus !== 'pending' && state.startStatus !== 'failed') {
-          continue; // Already processing
+        // Check for stuck 'processing' status (processing for more than 2 minutes)
+        if (state && state.startStatus === 'processing') {
+          const processingStartTime = state.updatedAt || state.createdAt;
+          if (processingStartTime < stuckThreshold) {
+            logger.warn({ 
+              arenaId: arena.arenaId.toString(),
+              processingSince: processingStartTime.toISOString(),
+            }, 'Found stuck arena in processing status, resetting to failed for retry');
+            
+            // Reset to failed so it can be retried
+            await db.arenaProcessingState.update({
+              where: { arenaId: arena.arenaId },
+              data: {
+                startStatus: 'failed',
+                startError: 'Stuck in processing status - reset for retry',
+              },
+            });
+            // Continue to retry it below
+          } else {
+            continue; // Still processing, not stuck yet
+          }
         }
         
-        logger.info({ 
-          arenaId: arena.arenaId.toString(), 
-          playerCount: arena.playerCount,
-          createdAt: arena.createdAt.toISOString(),
-        }, '10-minute countdown reached, starting arena');
+        // Skip if already completed
+        if (state && state.startStatus === 'completed') {
+          continue;
+        }
+        
+        // Get the first player entry time (countdown starts from first player join)
+        if (arena.playerEntries.length === 0) {
+          continue; // No players yet
+        }
+        
+        const firstPlayerEntryTime = arena.playerEntries.reduce((earliest, entry) => 
+          entry.createdAt < earliest ? entry.createdAt : earliest, 
+          arena.playerEntries[0].createdAt
+        );
+        
+        // Check if countdown has passed (first player joined more than countdown duration ago)
+        if (firstPlayerEntryTime > countdownThreshold) {
+          continue; // Countdown not reached yet
+        }
+        
+        // Retry if failed, or start if pending/not started
+        if (state && state.startStatus === 'failed') {
+          logger.info({ 
+            arenaId: arena.arenaId.toString(),
+            previousError: state.startError,
+          }, 'Retrying failed arena start');
+        } else {
+          logger.info({ 
+            arenaId: arena.arenaId.toString(), 
+            playerCount: arena.playerCount,
+            firstPlayerJoinedAt: firstPlayerEntryTime.toISOString(),
+            arenaCreatedAt: arena.createdAt.toISOString(),
+          }, 'Countdown reached (from first player join), starting arena');
+        }
         
         const assetIndices = arena.playerEntries.map(e => e.assetIndex);
         await this.startWorker.addJob(arena.arenaId, assetIndices);
@@ -140,6 +189,7 @@ export class ArenaLifecycleManager {
     logger.info('Checking for missed arenas...');
     
     const now = new Date();
+    const stuckThreshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
     
     // Find Ready arenas that haven't been started
     const readyArenas = await db.arena.findMany({
@@ -154,11 +204,73 @@ export class ArenaLifecycleManager {
         where: { arenaId: arena.arenaId },
       });
       
+      // Check for stuck processing status
+      if (state && state.startStatus === 'processing') {
+        const processingStartTime = state.updatedAt || state.createdAt;
+        if (processingStartTime < stuckThreshold) {
+          logger.warn({ 
+            arenaId: arena.arenaId.toString(),
+            processingSince: processingStartTime.toISOString(),
+          }, 'Found stuck Ready arena in processing status, resetting to failed');
+          
+          await db.arenaProcessingState.update({
+            where: { arenaId: arena.arenaId },
+            data: {
+              startStatus: 'failed',
+              startError: 'Stuck in processing status - reset for retry',
+            },
+          });
+        } else {
+          continue; // Still processing, not stuck yet
+        }
+      }
+      
       if (!state || state.startStatus === 'pending' || state.startStatus === 'failed') {
         logger.info({ arenaId: arena.arenaId.toString() }, 'Found missed Ready arena, triggering start');
         
         const assetIndices = arena.arenaAssets.map(a => a.assetIndex);
         await this.startWorker.addJob(arena.arenaId, assetIndices);
+      }
+    }
+    
+    // Also check for stuck Waiting arenas in processing status
+    const stuckWaitingArenas = await db.arena.findMany({
+      where: {
+        status: ArenaStatus.Waiting,
+        playerCount: { gte: 1 },
+      },
+      include: {
+        playerEntries: {
+          select: { playerWallet: true, assetIndex: true },
+        },
+      },
+    });
+    
+    for (const arena of stuckWaitingArenas) {
+      const state = await db.arenaProcessingState.findUnique({
+        where: { arenaId: arena.arenaId },
+      });
+      
+      if (state && state.startStatus === 'processing') {
+        const processingStartTime = state.updatedAt || state.createdAt;
+        if (processingStartTime < stuckThreshold) {
+          logger.warn({ 
+            arenaId: arena.arenaId.toString(),
+            processingSince: processingStartTime.toISOString(),
+          }, 'Found stuck Waiting arena in processing status, resetting to failed');
+          
+          await db.arenaProcessingState.update({
+            where: { arenaId: arena.arenaId },
+            data: {
+              startStatus: 'failed',
+              startError: 'Stuck in processing status - reset for retry',
+            },
+          });
+          
+          // Retry it
+          const assetIndices = arena.playerEntries.map(e => e.assetIndex);
+          await this.startWorker.addJob(arena.arenaId, assetIndices);
+        }
       }
     }
     
@@ -177,6 +289,28 @@ export class ArenaLifecycleManager {
       const state = await db.arenaProcessingState.findUnique({
         where: { arenaId: arena.arenaId },
       });
+      
+      // Check for stuck 'processing' status
+      if (state && state.endStatus === 'processing') {
+        const processingStartTime = state.updatedAt || state.createdAt;
+        if (processingStartTime < stuckThreshold) {
+          logger.warn({ 
+            arenaId: arena.arenaId.toString(),
+            processingSince: processingStartTime.toISOString(),
+          }, 'Found stuck Active arena end in processing status, resetting to failed');
+          
+          await db.arenaProcessingState.update({
+            where: { arenaId: arena.arenaId },
+            data: {
+              endStatus: 'failed',
+              endError: 'Stuck in processing status - reset for retry',
+            },
+          });
+          // Continue to retry it below
+        } else {
+          continue; // Still processing, not stuck yet
+        }
+      }
       
       if (!state || state.endStatus === 'pending' || state.endStatus === 'scheduled' || state.endStatus === 'failed') {
         logger.info({ arenaId: arena.arenaId.toString() }, 'Found missed Active arena past end time, triggering end');
