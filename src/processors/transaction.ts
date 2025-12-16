@@ -13,6 +13,7 @@ import config from '../config';
 import logger from '../utils/logger';
 import { processAccountUpdate } from './index';
 import { getAccountInfo } from '../solana/connection';
+import { cacheService } from '../services/cacheService';
 
 const PROGRAM_ID = new PublicKey(config.programId);
 
@@ -214,6 +215,20 @@ async function handleSetStartPrice(
 
   const assetIndex = arenaAsset?.assetIndex || 0;
 
+  // Update ArenaAsset with the start price
+  if (arenaAsset) {
+    await prisma.arenaAsset.update({
+      where: { pda: accounts.arenaAsset },
+      data: { startPrice: price },
+    });
+    logger.info({
+      arenaId: arena.arenaId.toString(),
+      asset: getAssetSymbol(assetIndex),
+      price,
+    }, 'ArenaAsset startPrice updated');
+  }
+
+  // Also create event for tracking
   await prisma.arenaEvent.create({
     data: {
       arenaId: arena.arenaId,
@@ -226,6 +241,9 @@ async function handleSetStartPrice(
       },
     },
   });
+
+  // Invalidate cache so frontend gets fresh data
+  await cacheService.invalidateArena(arena.arenaId.toString());
 
   logger.debug({
     arenaId: arena.arenaId.toString(),
